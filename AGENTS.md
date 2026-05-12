@@ -168,9 +168,29 @@ When modifying the agent loop:
 
 ## Testing Guidelines
 
+### TDD Development Mode
+
+This project follows **Test-Driven Development (TDD)** as its primary development workflow. Every feature, bug fix, or behavior change must be driven by tests written **before** the implementation code.
+
+The TDD cycle is:
+
+1. **Write a failing test** — define the desired behavior as a test that fails because the feature doesn't exist yet.
+2. **Make the test pass** — write the minimal implementation code that satisfies the test.
+3. **Refactor** — clean up the implementation while keeping all tests passing.
+
+Rules:
+
+- **No implementation without a test.** If a test doesn't exist for a behavior, write it first.
+- **Tests define the contract.** The test is the specification — it describes what the code should do, not how.
+- **Red → Green → Refactor, always.** Never skip the "red" step. A test must be seen failing before the implementation is written.
+- **All tests must pass before completion.** Every modification should keep the full integration test suite passing.
+- **Regression tests for bug fixes.** When fixing a bug, first write a test that reproduces the bug (it fails), then fix the bug (the test passes).
+
+### Test Structure
+
 Integration tests live in `reshape/tests/`. There are no `#[cfg(test)]` module tests within source files — all testing is integration-level.
 
-Name tests by behavior, e.g., `natural_language_returns_final_message`, `unknown_tool_reports_error`. Add regression tests for bug fixes.
+Name tests by behavior, e.g., `natural_language_returns_final_message`, `unknown_tool_reports_error`.
 
 ### Test Infrastructure
 
@@ -200,6 +220,19 @@ Name tests by behavior, e.g., `natural_language_returns_final_message`, `unknown
 - Validate state machine transitions: assert valid paths succeed and invalid paths fail.
 
 For tool and config changes, include enough test cases to cover core paths and edge cases (arg validation, provider routing, error handling when applicable). Every modification should keep all integration tests passing before completion.
+
+### TDD Checklist for New Features
+
+When adding a new feature, follow this checklist:
+
+1. Identify the desired behavior and write a test name that describes it.
+2. Write the test in the appropriate test file under `reshape/tests/`.
+3. Run `cargo test` — confirm the new test **fails** (red).
+4. Implement the minimal code to make the test pass (green).
+5. Run `cargo test` — confirm **all** tests pass, not just the new one.
+6. Refactor if needed, re-run `cargo test` to verify.
+7. Run `cargo clippy -- -D warnings` to ensure no lint violations.
+8. Run `cargo fmt` and verify formatting is clean.
 
 ## Configuration Guidelines
 
