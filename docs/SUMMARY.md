@@ -1,6 +1,6 @@
 # Summary
 
-- [Introduction](./README.md)
+- [Introduction](./introduction.md)
 - [Agent System Prompt](./agent-system-prompt.md)
 - [Design Documents](./design/README.md)
   - [CDP Event Ingress](./design/cdp-event-ingress.md)
