@@ -6,8 +6,9 @@ The project goal is to let a user describe an interface in natural language, hav
 
 ## Current Scope
 
-This repository currently implements the agent foundation:
+This repository currently implements the agent foundation plus the first browser-rendering adapter:
 
+- A Cargo workspace with separate core, CLI, browser adapter, and vendored browser automation crates.
 - A CLI process that owns the local runtime.
 - A single fixed session: `local:main`.
 - A normalized message protocol built around `Envelope<T>`.
@@ -16,9 +17,11 @@ This repository currently implements the agent foundation:
 - A safe local workspace abstraction with path escape protection.
 - A mock LLM provider for local development and tests.
 - A system prompt contract for page-generation behavior.
-- Design documents for future CDP, browser plugin, render, and observability layers.
+- A vendored `agent-browser` 0.27.0 CLI crate with an additive Rust façade.
+- An optional `reshape-browser` adapter that opens `index.html` through the browser façade after a completed turn.
+- Design documents for future CDP event ingress, browser plugin, and observability layers.
 
-Browser rendering, CDP control, and the floating browser-plugin chat UI are intentionally documented as adapter designs first. They are not coupled into the initial agent runtime.
+Browser rendering is wired at the CLI/output-adapter layer. CDP event ingress and the floating browser-plugin chat UI remain adapter designs and are not coupled into the agent runtime.
 
 ## Architecture
 
@@ -35,7 +38,14 @@ CLI Process
   -> Envelope<OutputEvent>
 ```
 
-Key modules:
+Workspace crates:
+
+- `crates/reshape-core`: protocol, runtime, session, LLM, tools, workspace, ingress, and observability contracts.
+- `crates/reshape-cli`: CLI argument parsing, dependency assembly, stdin loop, and optional browser-render output adapter.
+- `crates/reshape-browser`: `BrowserRenderer` trait and `AgentBrowserRenderer` implementation backed by the browser façade.
+- `crates/agent-browser`: vendored `vercel-labs/agent-browser` 0.27.0 `cli/` source with additive `src/lib.rs` and `src/facade.rs`.
+
+Core modules:
 
 - `protocol`: envelope, input events, output events, schema version, and error codes.
 - `session`: the single-session state model, turn state, and `SessionStore` trait.
@@ -45,7 +55,7 @@ Key modules:
 - `workspace`: safe local file access and workspace watcher traits.
 - `ingress`: input-source abstraction for CLI stdin and future adapters.
 - `observability`: telemetry trait boundary for logs, audit, metrics, and health.
-- `cli`: argument parsing, dependency assembly, and process lifecycle.
+The core runtime does not import `agent-browser` or `reshape-browser`; browser behavior is composed by `reshape-cli`.
 
 ## Agent Runtime Model
 
@@ -83,21 +93,32 @@ Create a workspace directory and start the CLI:
 
 ```bash
 mkdir -p page
-cargo run -- --workspace ./page
+cargo run -p reshape-cli -- --workspace ./page
 ```
 
 Then type a natural-language request into stdin.
 
 The current default provider is a mock provider intended for local development. It can exercise the file-tool loop and create `index.html` in the configured workspace.
 
+To render the completed `index.html` through the embedded browser adapter:
+
+```bash
+cargo run -p reshape-cli -- --workspace ./page --render-browser
+```
+
+Useful browser flags:
+
+- `--browser-session reshape-main`
+- `--browser-headed`
+
 ## Testing
 
 Run the full verification suite:
 
 ```bash
-cargo fmt --check
-cargo test
-cargo clippy --all-targets -- -D warnings
+cargo fmt --all --check
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 The test suite covers:
@@ -108,6 +129,8 @@ The test suite covers:
 - LLM tool-loop execution and budget limits.
 - Workspace file safety and watcher behavior.
 - System prompt contract.
+- Browser façade command construction.
+- Browser renderer file URL conversion and CLI output-trigger behavior.
 
 ## Design Documents
 
@@ -117,6 +140,7 @@ Additional design notes live in `docs/`:
 - `docs/design/cdp-event-ingress.md`: future CDP event normalization.
 - `docs/design/browser-plugin-websocket.md`: future browser-plugin WebSocket protocol.
 - `docs/design/browser-render-pipeline.md`: future browser rendering and refresh pipeline.
+- `docs/design/agent-browser-source-integration.md`: vendored `agent-browser` source boundaries and sync process.
 - `docs/design/runtime-observability.md`: telemetry, audit, metrics, and health design.
 
 ## Near-Term Extensions
@@ -126,7 +150,7 @@ The next practical milestones are:
 - Add a real OpenAI-compatible or Anthropic-compatible `LlmProvider`.
 - Add a WebSocket ingress adapter for the browser extension.
 - Add a CDP adapter that turns user browser actions into `InputEvent::CdpUserEvent`.
-- Add a render adapter that refreshes or updates the browser when workspace files change.
+- Extend the browser render adapter from completion-triggered `index.html` open to watcher-driven refresh and feedback.
 - Replace the no-op telemetry sink with structured logs and local audit persistence.
 
 ## Design Principles

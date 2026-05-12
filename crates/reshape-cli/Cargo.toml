@@ -1,0 +1,19 @@
+[package]
+name = "reshape-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "reshape"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+reshape-core = { path = "../reshape-core" }
+reshape-browser = { path = "../reshape-browser" }
+tokio.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true

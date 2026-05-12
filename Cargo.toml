@@ -1,19 +1,26 @@
-[package]
-name = "reshape"
+[workspace]
+members = [
+    "crates/reshape-core",
+    "crates/reshape-cli",
+    "crates/reshape-browser",
+    "crates/agent-browser",
+]
+resolver = "3"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
+[workspace.dependencies]
 async-trait = "0.1.89"
 chrono = { version = "0.4.44", features = ["serde"] }
 clap = { version = "4.6.1", features = ["derive"] }
 notify = "8.2.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
+tempfile = "3.27.0"
 thiserror = "2.0.18"
 tokio = { version = "1.52.3", features = ["full"] }
 tracing-subscriber = "0.3.23"
+url = "2"
 uuid = { version = "1.23.1", features = ["v4", "serde"] }
-
-[dev-dependencies]
-tempfile = "3.27.0"

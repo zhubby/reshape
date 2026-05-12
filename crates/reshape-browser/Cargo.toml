@@ -1,0 +1,12 @@
+[package]
+name = "reshape-browser"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+agent-browser = { path = "../agent-browser" }
+thiserror.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
