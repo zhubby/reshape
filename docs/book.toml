@@ -1,0 +1,16 @@
+[book]
+title = "Reshape Documentation"
+authors = ["Reshape Contributors"]
+language = "en"
+multilingual = false
+src = "."
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+smart-punctuation = true
+git-repository-url = "https://github.com/reshape/reshape"
