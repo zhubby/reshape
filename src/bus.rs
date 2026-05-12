@@ -10,7 +10,7 @@ pub trait EventBus: Send + Sync {
     async fn publish_outbound(&self, event: Envelope<OutputEvent>) -> Result<()>;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InProcessBus {
     inbound_tx: mpsc::Sender<Envelope<InputEvent>>,
     outbound_tx: mpsc::Sender<Envelope<OutputEvent>>,

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use reshape::bus::InProcessBus;
 use reshape::cli::{CliArgs, build_runtime};
 use reshape::ingress::IngressSource;
 use reshape::ingress::cli_stdin::CliStdinIngress;
@@ -16,6 +17,16 @@ fn cli_reports_missing_workspace_during_config_build() {
     let error = args.into_config().unwrap_err();
 
     assert!(error.to_string().contains("workspace does not exist"));
+}
+
+#[test]
+fn cli_config_defaults_to_usable_mock_provider() {
+    let dir = tempfile::tempdir().unwrap();
+    let args = CliArgs::parse_from(["reshape", "--workspace", dir.path().to_str().unwrap()]);
+
+    let config = args.into_config().unwrap();
+
+    assert!(config.llm.use_mock);
 }
 
 #[tokio::test]
@@ -108,4 +119,35 @@ async fn cli_stdin_ingress_skips_blank_lines_without_ending() {
             source: InputSource::Cli,
         }
     );
+}
+
+#[tokio::test]
+async fn cli_ingress_bus_runtime_chain_creates_workspace_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = CliArgs::parse_from(["reshape", "--workspace", dir.path().to_str().unwrap()])
+        .into_config()
+        .unwrap();
+    let runtime = build_runtime(config, Arc::new(MockLlmProvider::default())).unwrap();
+    let (bus, mut inbound_rx, mut outbound_rx) = InProcessBus::new(8);
+    let input = tokio::io::BufReader::new(&b"create a page\n"[..]);
+    let mut ingress = CliStdinIngress::new(input);
+
+    let output = reshape::cli::process_ingress_once(
+        &mut ingress,
+        &bus,
+        &mut inbound_rx,
+        &mut outbound_rx,
+        &runtime,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(
+        output,
+        OutputEvent::Completed {
+            summary: "Mock page generated in index.html".to_string()
+        }
+    );
+    assert!(dir.path().join("index.html").exists());
 }

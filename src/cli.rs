@@ -2,14 +2,17 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Parser;
-use tokio::io::AsyncBufReadExt;
+use tokio::sync::mpsc;
 
+use crate::bus::{EventBus, InProcessBus};
 use crate::config::AppConfig;
 use crate::error::Result;
+use crate::ingress::IngressSource;
+use crate::ingress::cli_stdin::CliStdinIngress;
 use crate::llm::LlmProvider;
 use crate::llm::mock::MockLlmProvider;
 use crate::observability::NoopTelemetry;
-use crate::protocol::{Envelope, InputEvent, InputSource, OutputEvent};
+use crate::protocol::{Envelope, InputEvent, OutputEvent};
 use crate::runtime::{AgentRuntime, RuntimeDeps, RuntimeLimits};
 use crate::session::store::InMemorySessionStore;
 use crate::tools::InMemoryToolRegistry;
@@ -44,9 +47,11 @@ impl CliArgs {
     }
 
     pub fn into_config(self) -> Result<AppConfig> {
-        Ok(AppConfig::for_workspace(self.workspace)?
-            .with_model(self.model)
-            .with_mock_llm(self.mock_llm))
+        let mut config = AppConfig::for_workspace(self.workspace)?.with_model(self.model);
+        if self.mock_llm {
+            config = config.with_mock_llm(true);
+        }
+        Ok(config)
     }
 }
 
@@ -83,24 +88,56 @@ pub fn build_runtime(config: AppConfig, provider: Arc<dyn LlmProvider>) -> Resul
 }
 
 async fn run_stdin_loop(runtime: AgentRuntime) -> Result<()> {
-    let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
+    let (bus, mut inbound_rx, mut outbound_rx) = InProcessBus::new(64);
+    let stdin = tokio::io::BufReader::new(tokio::io::stdin());
+    let mut ingress = CliStdinIngress::new(stdin);
 
-    while let Some(line) = lines.next_line().await? {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-
-        let output = runtime
-            .process(Envelope::new(InputEvent::UserText {
-                text: line.to_string(),
-                source: InputSource::Cli,
-            }))
-            .await?;
-        print_output(output.payload);
+    while let Some(output) = process_ingress_once(
+        &mut ingress,
+        &bus,
+        &mut inbound_rx,
+        &mut outbound_rx,
+        &runtime,
+    )
+    .await?
+    {
+        print_output(output);
     }
 
     Ok(())
+}
+
+pub async fn process_ingress_once<I, B>(
+    ingress: &mut I,
+    bus: &B,
+    inbound_rx: &mut mpsc::Receiver<Envelope<InputEvent>>,
+    outbound_rx: &mut mpsc::Receiver<Envelope<OutputEvent>>,
+    runtime: &AgentRuntime,
+) -> Result<Option<OutputEvent>>
+where
+    I: IngressSource,
+    B: EventBus,
+{
+    let Some(event) = ingress.next_event().await? else {
+        return Ok(None);
+    };
+
+    bus.publish_inbound(Envelope::new(event)).await?;
+    let inbound = inbound_rx.recv().await.ok_or_else(closed_bus_error)?;
+    let outbound = runtime.process(inbound).await?;
+    bus.publish_outbound(outbound).await?;
+
+    Ok(Some(
+        outbound_rx
+            .recv()
+            .await
+            .ok_or_else(closed_bus_error)?
+            .payload,
+    ))
+}
+
+fn closed_bus_error() -> crate::error::ReshapeError {
+    std::io::Error::new(std::io::ErrorKind::BrokenPipe, "in-process bus closed").into()
 }
 
 fn print_output(output: OutputEvent) {
