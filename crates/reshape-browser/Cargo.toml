@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-agent-browser = { path = "../agent-browser" }
+agent-browser.workspace = true
 thiserror.workspace = true
 url.workspace = true
 

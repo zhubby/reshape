@@ -18,6 +18,7 @@ Two copied files have a workspace-path adjustment so the vendored crate stays se
 - `build.rs`: dashboard placeholder path changed from `../packages/dashboard/out` to `packages/dashboard/out`.
 - `src/native/stream/http.rs`: embedded dashboard asset path changed from `../packages/dashboard/out/` to `packages/dashboard/out/`.
 - `src/native/daemon.rs`: embedded library mode skips Unix stderr file-descriptor redirection so an in-process daemon does not silence the host CLI.
+- `Cargo.toml`: dependency versions and release profiles are managed by the root workspace.
 
 Upstream `cli/` expects to live beside a repository-level `packages/` directory. Inside this workspace, keeping that relative path would generate `crates/packages/` during builds. The local path keeps generated dashboard placeholders under `crates/agent-browser/packages/`.
 
@@ -41,6 +42,8 @@ cargo test -p agent-browser
 ```
 
 Chrome-dependent e2e tests should stay opt-in unless the local environment is known to provide Chrome.
+
+This vendored crate does not keep its upstream `Cargo.lock`; dependency resolution is owned by the repository root lockfile.
 
 ## Sync Process
 

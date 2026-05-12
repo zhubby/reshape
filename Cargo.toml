@@ -12,15 +12,46 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace.dependencies]
+aes-gcm = "0.10"
+agent-browser = { path = "crates/agent-browser" }
 async-trait = "0.1.89"
+base64 = "0.22"
 chrono = { version = "0.4.44", features = ["serde"] }
 clap = { version = "4.6.1", features = ["derive"] }
+dirs = "5.0"
+futures-util = "0.3"
+getrandom = "0.2"
+hex = "0.4"
+hmac = "0.12"
+image = "0.25"
+libc = "0.2"
 notify = "8.2.0"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots", "stream"] }
+rust-embed = "8"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
+sha2 = "0.10"
+similar = "2"
+socket2 = "0.6"
 tempfile = "3.27.0"
 thiserror = "2.0.18"
+time = { version = "0.3", features = ["formatting"] }
 tokio = { version = "1.52.3", features = ["full"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 tracing-subscriber = "0.3.23"
 url = "2"
+urlencoding = "2"
 uuid = { version = "1.23.1", features = ["v4", "serde"] }
+windows-sys = { version = "0.52", features = ["Win32_System_Threading", "Win32_Foundation"] }
+zip = { version = "8.2.0", default-features = false, features = ["deflate"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.ci]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
