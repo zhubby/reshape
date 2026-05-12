@@ -1,0 +1,95 @@
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use uuid::Uuid;
+
+pub const DEFAULT_SCHEMA_VERSION: &str = "1.0";
+pub const DEFAULT_SESSION_KEY: &str = "local:main";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Envelope<T> {
+    pub header: EnvelopeHeader,
+    pub metadata: BTreeMap<String, Value>,
+    pub payload: T,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvelopeHeader {
+    pub message_id: Uuid,
+    pub trace_id: Uuid,
+    pub session_key: String,
+    pub timestamp: DateTime<Utc>,
+    pub attempt: u32,
+    pub schema_version: String,
+}
+
+impl<T> Envelope<T> {
+    pub fn new(payload: T) -> Self {
+        Self::for_session(DEFAULT_SESSION_KEY, payload)
+    }
+
+    pub fn for_session(session_key: impl Into<String>, payload: T) -> Self {
+        Self {
+            header: EnvelopeHeader {
+                message_id: Uuid::new_v4(),
+                trace_id: Uuid::new_v4(),
+                session_key: session_key.into(),
+                timestamp: Utc::now(),
+                attempt: 1,
+                schema_version: DEFAULT_SCHEMA_VERSION.to_string(),
+            },
+            metadata: BTreeMap::new(),
+            payload,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum InputEvent {
+    UserText { text: String, source: InputSource },
+    CdpUserEvent { event: CdpUserEvent },
+    PluginMessage { text: String },
+    WorkspaceChanged { path: PathBuf },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InputSource {
+    Cli,
+    Cdp,
+    Plugin,
+    Test,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CdpUserEvent {
+    pub event_type: String,
+    pub selector_hint: Option<String>,
+    pub text: Option<String>,
+    pub metadata: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum OutputEvent {
+    FinalMessage { text: String },
+    StreamChunk { text: String },
+    ToolProgress { tool_name: String, message: String },
+    WorkspaceFileChanged { path: PathBuf },
+    Error { code: ErrorCode, message: String },
+    Completed { summary: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ErrorCode {
+    InvalidSchema,
+    ValidationFailed,
+    DuplicateMessage,
+    AgentTimeout,
+    ToolTimeout,
+    ProviderUnavailable,
+    ProviderResponseInvalid,
+    ToolBudgetExceeded,
+    Failed,
+}
