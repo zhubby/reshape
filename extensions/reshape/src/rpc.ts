@@ -13,6 +13,7 @@ import {
 } from "./protocol"
 
 export const DEFAULT_RPC_ADDRESS = "127.0.0.1:7331"
+export type ConnectionStatus = "idle" | "connecting" | "connected" | "error"
 
 export type ChatResult = {
   id: string

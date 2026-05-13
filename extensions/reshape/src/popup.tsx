@@ -1,14 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 
-import { connectAndHandshake, sendChatMessage } from "./rpc"
+import type { ChatResult, ConnectionStatus } from "./rpc"
 import { loadRpcAddress, saveRpcAddress } from "./storage"
 import type { TabContext } from "./protocol"
 
-type ConnectionStatus = "idle" | "connecting" | "connected" | "error"
 type ChatMessage = {
   role: "user" | "reshape" | "system"
   text: string
 }
+type BackgroundStatus = {
+  status: ConnectionStatus
+  statusText: string
+  address?: string
+}
+type BackgroundResponse<T> =
+  | ({ ok: true } & T)
+  | {
+      ok: false
+      error: string
+    }
 
 function IndexPopup() {
   const [rpcAddress, setRpcAddress] = useState("127.0.0.1:7331")
@@ -21,7 +31,7 @@ function IndexPopup() {
       text: "配置 reshape RPC 地址并完成握手后即可聊天。"
     }
   ])
-  const socketRef = useRef<WebSocket | null>(null)
+  const didAutoConnect = useRef(false)
 
   const statusLabel = useMemo(() => {
     switch (status) {
@@ -37,26 +47,64 @@ function IndexPopup() {
   }, [status])
 
   useEffect(() => {
-    loadRpcAddress().then(setRpcAddress).catch(() => setRpcAddress("127.0.0.1:7331"))
-    return () => socketRef.current?.close()
+    void initializeConnection()
   }, [])
+
+  async function initializeConnection() {
+    const address = await loadRpcAddress().catch(() => "127.0.0.1:7331")
+    setRpcAddress(address)
+
+    const status = await sendBackground<{ status: BackgroundStatus }>({
+      type: "reshape.status"
+    }).catch(() => null)
+    if (status?.status) {
+      applyStatus(status.status)
+      if (status.status.status === "connected") {
+        didAutoConnect.current = true
+        return
+      }
+    }
+
+    if (!didAutoConnect.current) {
+      didAutoConnect.current = true
+      setStatus("connecting")
+      setStatusText("正在连接 reshape RPC...")
+      try {
+        const tab = await activeTabContext()
+        const response = await sendBackground<{ status: BackgroundStatus }>({
+          type: "reshape.connect",
+          address,
+          tab
+        })
+        applyStatus(response.status)
+      } catch (error) {
+        setStatus("error")
+        setStatusText(error instanceof Error ? error.message : "握手失败")
+      }
+    }
+  }
+
+  function applyStatus(snapshot: BackgroundStatus) {
+    setStatus(snapshot.status)
+    setStatusText(snapshot.statusText)
+    if (snapshot.address) {
+      setRpcAddress(snapshot.address)
+    }
+  }
 
   async function connect() {
     setStatus("connecting")
     setStatusText("正在连接 reshape RPC...")
-    socketRef.current?.close()
 
     try {
       await saveRpcAddress(rpcAddress)
       const tab = await activeTabContext()
-      const socket = await connectAndHandshake(rpcAddress, tab)
-      socketRef.current = socket
-      socket.addEventListener("close", () => {
-        setStatus("idle")
-        setStatusText("连接已关闭")
+      const response = await sendBackground<{ status: BackgroundStatus }>({
+        type: "reshape.connect",
+        address: rpcAddress,
+        tab
       })
-      setStatus("connected")
-      setStatusText("已连接到 reshape RPC")
+      applyStatus(response.status)
     } catch (error) {
       setStatus("error")
       setStatusText(error instanceof Error ? error.message : "握手失败")
@@ -65,8 +113,7 @@ function IndexPopup() {
 
   async function sendMessage() {
     const text = input.trim()
-    const socket = socketRef.current
-    if (!text || !socket || status !== "connected") {
+    if (!text || status !== "connected") {
       return
     }
 
@@ -75,7 +122,16 @@ function IndexPopup() {
 
     try {
       const tab = await activeTabContext()
-      const result = await sendChatMessage(socket, text, tab)
+      const response = await sendBackground<{
+        result: ChatResult
+        status: BackgroundStatus
+      }>({
+        type: "reshape.send",
+        text,
+        tab
+      })
+      const result = response.result
+      applyStatus(response.status)
       setMessages((current) => [...current, { role: "reshape", text: result.text }])
     } catch (error) {
       setMessages((current) => [
@@ -148,6 +204,27 @@ function IndexPopup() {
       </form>
     </main>
   )
+}
+
+function sendBackground<T>(message: Record<string, unknown>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(message, (response: BackgroundResponse<T>) => {
+      const error = chrome.runtime.lastError
+      if (error) {
+        reject(new Error(error.message))
+        return
+      }
+      if (!isOkResponse(response)) {
+        reject(new Error(response?.error || "background request failed"))
+        return
+      }
+      resolve(response)
+    })
+  })
+}
+
+function isOkResponse<T>(response: BackgroundResponse<T> | undefined): response is { ok: true } & T {
+  return response?.ok === true
 }
 
 async function activeTabContext(): Promise<TabContext> {
