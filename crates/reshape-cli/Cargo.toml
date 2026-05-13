@@ -2,6 +2,7 @@
 name = "reshape-cli"
 version.workspace = true
 edition.workspace = true
+default-run = "reshape"
 
 [[bin]]
 name = "reshape"
