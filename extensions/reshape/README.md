@@ -35,14 +35,14 @@ The popup shows an RPC address input. The default value is:
 The extension normalizes that value to:
 
 ```text
-ws://127.0.0.1:7331/v1/plugin
+ws://127.0.0.1:7331/v1/rpc
 ```
 
-On connect, the first WebSocket frame is a reshape plugin handshake:
+On connect, the first WebSocket frame is the reshape RPC handshake:
 
 ```json
 {
-  "type": "reshape.plugin.handshake",
+  "type": "reshape.rpc.handshake",
   "protocolVersion": "1.0",
   "client": {
     "name": "reshape-plasmo-extension",
@@ -56,7 +56,7 @@ On connect, the first WebSocket frame is a reshape plugin handshake:
 }
 ```
 
-After the server returns `reshape.plugin.handshake_ack`, chat messages are sent
+After the server returns `reshape.rpc.handshake_ack`, chat messages are sent
 as JSON-RPC `reshape.input` frames over the same connection.
 
 ## Checks

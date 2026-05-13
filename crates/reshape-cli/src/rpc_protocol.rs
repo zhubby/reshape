@@ -103,25 +103,25 @@ pub struct RpcResponse {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct PluginHandshake {
+pub struct RpcHandshake {
     #[serde(rename = "type")]
-    #[ts(rename = "type", type = "\"reshape.plugin.handshake\"")]
+    #[ts(rename = "type", type = "\"reshape.rpc.handshake\"")]
     pub frame_type: String,
     #[ts(type = "\"1.0\"")]
     pub protocol_version: String,
-    pub client: PluginClient,
+    pub client: RpcClient,
     #[serde(default)]
-    pub tab: PluginTab,
+    pub tab: RpcTabContext,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, TS)]
-pub struct PluginClient {
+pub struct RpcClient {
     pub name: String,
     pub version: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, TS)]
-pub struct PluginTab {
+pub struct RpcTabContext {
     pub id: Option<u32>,
     pub url: Option<String>,
     pub title: Option<String>,
@@ -129,9 +129,9 @@ pub struct PluginTab {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct PluginHandshakeAck {
+pub struct RpcHandshakeAck {
     #[serde(rename = "type")]
-    #[ts(rename = "type", type = "\"reshape.plugin.handshake_ack\"")]
+    #[ts(rename = "type", type = "\"reshape.rpc.handshake_ack\"")]
     pub frame_type: String,
     #[ts(type = "\"1.0\"")]
     pub protocol_version: String,
@@ -200,13 +200,13 @@ pub struct ReshapeInputParams {
     pub session_key: String,
     #[ts(type = "\"1.0\"")]
     pub schema_version: String,
-    pub metadata: PluginRequestMetadata,
+    pub metadata: RpcRequestMetadata,
     pub input: ReshapeInputPayload,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct PluginRequestMetadata {
+pub struct RpcRequestMetadata {
     pub client: String,
     pub tab_id: Option<u32>,
     pub url: Option<String>,
@@ -279,47 +279,47 @@ pub fn parse_rpc_request(text: &str) -> RpcResult<RpcRequest> {
     RpcRequest::from_json_value(value)
 }
 
-pub fn parse_plugin_handshake(text: &str) -> RpcResult<PluginHandshake> {
-    tracing::debug!(bytes = text.len(), "parsing plugin handshake frame");
-    let handshake: PluginHandshake = serde_json::from_str(text).map_err(|err| {
-        tracing::warn!(error = %err, "invalid plugin handshake frame");
-        RpcError::invalid_request(format!("plugin handshake required: {err}"))
+pub fn parse_rpc_handshake(text: &str) -> RpcResult<RpcHandshake> {
+    tracing::debug!(bytes = text.len(), "parsing rpc handshake frame");
+    let handshake: RpcHandshake = serde_json::from_str(text).map_err(|err| {
+        tracing::warn!(error = %err, "invalid rpc handshake frame");
+        RpcError::invalid_request(format!("rpc handshake required: {err}"))
     })?;
-    if handshake.frame_type != "reshape.plugin.handshake" {
+    if handshake.frame_type != "reshape.rpc.handshake" {
         tracing::warn!(
             frame_type = %handshake.frame_type,
-            "unsupported plugin handshake frame type"
+            "unsupported rpc handshake frame type"
         );
-        return Err(RpcError::invalid_request("plugin handshake required"));
+        return Err(RpcError::invalid_request("rpc handshake required"));
     }
     if handshake.protocol_version != DEFAULT_SCHEMA_VERSION {
         tracing::warn!(
             protocol_version = %handshake.protocol_version,
-            "unsupported plugin protocol version"
+            "unsupported rpc protocol version"
         );
         return Err(RpcError::invalid_params(format!(
-            "unsupported plugin protocolVersion: {}",
+            "unsupported rpc protocolVersion: {}",
             handshake.protocol_version
         )));
     }
     if handshake.client.name.trim().is_empty() || handshake.client.version.trim().is_empty() {
-        tracing::warn!("plugin handshake missing client identity");
+        tracing::warn!("rpc handshake missing client identity");
         return Err(RpcError::invalid_params(
-            "plugin client name and version are required",
+            "rpc client name and version are required",
         ));
     }
     tracing::debug!(
         client_name = %handshake.client.name,
         client_version = %handshake.client.version,
-        "plugin handshake accepted"
+        "rpc handshake accepted"
     );
     Ok(handshake)
 }
 
 #[must_use]
-pub fn plugin_handshake_ack() -> PluginHandshakeAck {
-    PluginHandshakeAck {
-        frame_type: "reshape.plugin.handshake_ack".to_string(),
+pub fn rpc_handshake_ack() -> RpcHandshakeAck {
+    RpcHandshakeAck {
+        frame_type: "reshape.rpc.handshake_ack".to_string(),
         protocol_version: DEFAULT_SCHEMA_VERSION.to_string(),
         schema_version: DEFAULT_SCHEMA_VERSION.to_string(),
         session_key: DEFAULT_SESSION_KEY.to_string(),
@@ -330,11 +330,11 @@ pub fn export_ts_bindings(output: &std::path::Path) -> std::result::Result<(), E
     let mut content =
         String::from("// This file was generated by ts-rs. Do not edit this file manually.\n\n");
     append_ts::<ErrorCode>(&mut content);
-    append_ts::<PluginClient>(&mut content);
-    append_ts::<PluginTab>(&mut content);
-    append_ts::<PluginHandshake>(&mut content);
-    append_ts::<PluginHandshakeAck>(&mut content);
-    append_ts::<PluginRequestMetadata>(&mut content);
+    append_ts::<RpcClient>(&mut content);
+    append_ts::<RpcTabContext>(&mut content);
+    append_ts::<RpcHandshake>(&mut content);
+    append_ts::<RpcHandshakeAck>(&mut content);
+    append_ts::<RpcRequestMetadata>(&mut content);
     append_ts::<ReshapeInputPayload>(&mut content);
     append_ts::<ReshapeInputParams>(&mut content);
     append_ts::<ReshapeInputRequest>(&mut content);

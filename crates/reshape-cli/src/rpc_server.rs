@@ -11,7 +11,7 @@ use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::rpc_protocol::{
-    RpcError, RpcResponse, parse_plugin_handshake, parse_rpc_request, plugin_handshake_ack,
+    RpcError, RpcResponse, parse_rpc_handshake, parse_rpc_request, rpc_handshake_ack,
 };
 
 const AGENT_QUEUE_CAPACITY: usize = 32;
@@ -49,7 +49,6 @@ pub fn rpc_router(runtime: AgentRuntime) -> Router {
     tokio::spawn(run_agent_worker(runtime, agent_rx));
     Router::new()
         .route("/v1/rpc", get(ws_handler))
-        .route("/v1/plugin", get(plugin_ws_handler))
         .with_state(RpcServerState { agent_tx })
 }
 
@@ -58,19 +57,34 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<RpcServerState>) -
     ws.on_upgrade(|socket| handle_socket(socket, state))
 }
 
-async fn plugin_ws_handler(ws: WebSocketUpgrade, State(state): State<RpcServerState>) -> Response {
-    tracing::debug!("websocket upgrade accepted for plugin endpoint");
-    ws.on_upgrade(|socket| handle_plugin_socket(socket, state))
-}
-
 async fn handle_socket(socket: WebSocket, state: RpcServerState) {
     let (mut sender, mut receiver) = socket.split();
+    let mut is_handshake_complete = false;
     tracing::debug!("json-rpc websocket connection opened");
     while let Some(message) = receiver.next().await {
         let response = match message {
             Ok(Message::Text(text)) => {
                 tracing::debug!(bytes = text.len(), "received json-rpc websocket text frame");
-                handle_text_frame(&state, text.as_str()).await
+                if !is_handshake_complete {
+                    match parse_rpc_handshake(text.as_str()) {
+                        Ok(_) => {
+                            if sender
+                                .send(Message::Text(rpc_handshake_ack_to_text().into()))
+                                .await
+                                .is_err()
+                            {
+                                tracing::warn!("failed to send rpc handshake ack");
+                                break;
+                            }
+                            is_handshake_complete = true;
+                            tracing::debug!("rpc handshake ack sent on json-rpc websocket");
+                            None
+                        }
+                        Err(error) => Some(RpcResponse::error(None, error)),
+                    }
+                } else {
+                    handle_text_frame(&state, text.as_str()).await
+                }
             }
             Ok(Message::Binary(_)) => {
                 tracing::debug!("rejecting unsupported json-rpc websocket binary frame");
@@ -107,104 +121,6 @@ async fn handle_socket(socket: WebSocket, state: RpcServerState) {
         tracing::debug!("sent json-rpc websocket response");
     }
     tracing::debug!("json-rpc websocket connection closed");
-}
-
-async fn handle_plugin_socket(socket: WebSocket, state: RpcServerState) {
-    let (mut sender, mut receiver) = socket.split();
-    tracing::debug!("plugin websocket connection opened");
-
-    let Some(handshake_message) = receiver.next().await else {
-        tracing::debug!("plugin websocket closed before handshake");
-        return;
-    };
-
-    let handshake_text = match handshake_message {
-        Ok(Message::Text(text)) => text,
-        Ok(Message::Close(frame)) => {
-            tracing::debug!(?frame, "plugin websocket closing before handshake");
-            return;
-        }
-        Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {
-            send_response(
-                &mut sender,
-                RpcResponse::error(None, RpcError::invalid_request("plugin handshake required")),
-            )
-            .await;
-            return;
-        }
-        Ok(Message::Binary(_)) => {
-            send_response(
-                &mut sender,
-                RpcResponse::error(
-                    None,
-                    RpcError::invalid_request("plugin handshake must be a text frame"),
-                ),
-            )
-            .await;
-            return;
-        }
-        Err(error) => {
-            tracing::warn!(%error, "plugin websocket handshake frame error");
-            send_response(
-                &mut sender,
-                RpcResponse::error(None, RpcError::server(error.to_string())),
-            )
-            .await;
-            return;
-        }
-    };
-
-    if let Err(error) = parse_plugin_handshake(handshake_text.as_str()) {
-        send_response(&mut sender, RpcResponse::error(None, error)).await;
-        return;
-    }
-
-    if sender
-        .send(Message::Text(plugin_handshake_ack_to_text().into()))
-        .await
-        .is_err()
-    {
-        tracing::warn!("failed to send plugin handshake ack");
-        return;
-    }
-    tracing::debug!("plugin handshake ack sent");
-
-    while let Some(message) = receiver.next().await {
-        let response = match message {
-            Ok(Message::Text(text)) => {
-                tracing::debug!(bytes = text.len(), "received plugin json-rpc text frame");
-                handle_text_frame(&state, text.as_str()).await
-            }
-            Ok(Message::Binary(_)) => {
-                tracing::debug!("rejecting unsupported plugin binary frame");
-                Some(RpcResponse::error(
-                    None,
-                    RpcError::invalid_request("binary frames are not supported"),
-                ))
-            }
-            Ok(Message::Close(frame)) => {
-                tracing::debug!(?frame, "plugin websocket connection closing");
-                break;
-            }
-            Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => None,
-            Err(error) => {
-                tracing::warn!(%error, "plugin websocket frame error");
-                Some(RpcResponse::error(
-                    None,
-                    RpcError::server(error.to_string()),
-                ))
-            }
-        };
-
-        let Some(response) = response else {
-            continue;
-        };
-        if !send_response(&mut sender, response).await {
-            break;
-        }
-    }
-
-    tracing::debug!("plugin websocket connection closed");
 }
 
 async fn handle_text_frame(state: &RpcServerState, text: &str) -> Option<RpcResponse> {
@@ -299,26 +215,10 @@ fn response_to_text(response: &RpcResponse) -> String {
     })
 }
 
-fn plugin_handshake_ack_to_text() -> String {
-    serde_json::to_string(&plugin_handshake_ack()).unwrap_or_else(|error| {
+fn rpc_handshake_ack_to_text() -> String {
+    serde_json::to_string(&rpc_handshake_ack()).unwrap_or_else(|error| {
         format!(
-            r#"{{"jsonrpc":"2.0","error":{{"code":-32000,"message":"failed to serialize plugin handshake ack: {error}"}}}}"#
+            r#"{{"jsonrpc":"2.0","error":{{"code":-32000,"message":"failed to serialize rpc handshake ack: {error}"}}}}"#
         )
     })
-}
-
-async fn send_response(
-    sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
-    response: RpcResponse,
-) -> bool {
-    if sender
-        .send(Message::Text(response_to_text(&response).into()))
-        .await
-        .is_err()
-    {
-        tracing::warn!("failed to send websocket response");
-        return false;
-    }
-    tracing::debug!("sent websocket response");
-    true
 }

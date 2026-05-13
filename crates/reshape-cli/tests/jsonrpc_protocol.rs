@@ -1,6 +1,6 @@
 use reshape_cli::rpc_protocol::{
-    JsonRpcErrorCode, RpcRequest, RpcResponse, parse_plugin_handshake, parse_rpc_request,
-    plugin_handshake_ack,
+    JsonRpcErrorCode, RpcRequest, RpcResponse, parse_rpc_handshake, parse_rpc_request,
+    rpc_handshake_ack,
 };
 use reshape_core::protocol::{
     DEFAULT_SCHEMA_VERSION, DEFAULT_SESSION_KEY, Envelope, InputEvent, InputSource, OutputEvent,
@@ -145,10 +145,10 @@ fn numeric_jsonrpc_id_is_preserved_in_success_response() {
 }
 
 #[test]
-fn plugin_handshake_frame_parses_client_and_tab_context() {
-    let handshake = parse_plugin_handshake(
+fn rpc_handshake_frame_parses_client_and_tab_context() {
+    let handshake = parse_rpc_handshake(
         r#"{
-            "type": "reshape.plugin.handshake",
+            "type": "reshape.rpc.handshake",
             "protocolVersion": "1.0",
             "client": {
                 "name": "reshape-plasmo-extension",
@@ -175,10 +175,10 @@ fn plugin_handshake_frame_parses_client_and_tab_context() {
 }
 
 #[test]
-fn plugin_handshake_rejects_unsupported_protocol_version() {
-    let error = parse_plugin_handshake(
+fn rpc_handshake_rejects_unsupported_protocol_version() {
+    let error = parse_rpc_handshake(
         r#"{
-            "type": "reshape.plugin.handshake",
+            "type": "reshape.rpc.handshake",
             "protocolVersion": "2.0",
             "client": {
                 "name": "reshape-plasmo-extension",
@@ -189,15 +189,15 @@ fn plugin_handshake_rejects_unsupported_protocol_version() {
     .unwrap_err();
 
     assert_eq!(error.code, JsonRpcErrorCode::InvalidParams);
-    assert!(error.message.contains("unsupported plugin protocolVersion"));
+    assert!(error.message.contains("unsupported rpc protocolVersion"));
 }
 
 #[test]
-fn plugin_handshake_ack_contains_session_and_schema_contract() {
-    let ack = plugin_handshake_ack();
+fn rpc_handshake_ack_contains_session_and_schema_contract() {
+    let ack = rpc_handshake_ack();
     let value = serde_json::to_value(ack).unwrap();
 
-    assert_eq!(value["type"], "reshape.plugin.handshake_ack");
+    assert_eq!(value["type"], "reshape.rpc.handshake_ack");
     assert_eq!(value["protocolVersion"], "1.0");
     assert_eq!(value["schemaVersion"], DEFAULT_SCHEMA_VERSION);
     assert_eq!(value["sessionKey"], DEFAULT_SESSION_KEY);

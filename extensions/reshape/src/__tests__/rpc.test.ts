@@ -10,25 +10,25 @@ import {
 } from "../rpc"
 
 describe("normalizeRpcAddress", () => {
-  it("defaults to the local reshape plugin endpoint", () => {
-    expect(normalizeRpcAddress("")).toBe("ws://127.0.0.1:7331/v1/plugin")
+  it("defaults to the local reshape rpc endpoint", () => {
+    expect(normalizeRpcAddress("")).toBe("ws://127.0.0.1:7331/v1/rpc")
     expect(DEFAULT_RPC_ADDRESS).toBe("127.0.0.1:7331")
   })
 
   it("normalizes host and port input", () => {
     expect(normalizeRpcAddress("localhost:7331")).toBe(
-      "ws://localhost:7331/v1/plugin"
+      "ws://localhost:7331/v1/rpc"
     )
   })
 
-  it("preserves a full websocket URL while forcing the plugin path", () => {
-    expect(normalizeRpcAddress("ws://127.0.0.1:7331/v1/rpc")).toBe(
-      "ws://127.0.0.1:7331/v1/plugin"
+  it("preserves a full websocket URL while forcing the rpc path", () => {
+    expect(normalizeRpcAddress("ws://127.0.0.1:7331/v1/plugin")).toBe(
+      "ws://127.0.0.1:7331/v1/rpc"
     )
   })
 })
 
-describe("plugin protocol frames", () => {
+describe("rpc protocol frames", () => {
   it("builds the required handshake frame", () => {
     const frame = buildHandshakeFrame({
       id: 123,
@@ -37,7 +37,7 @@ describe("plugin protocol frames", () => {
     })
 
     expect(frame).toEqual({
-      type: "reshape.plugin.handshake",
+      type: "reshape.rpc.handshake",
       protocolVersion: "1.0",
       client: {
         name: "reshape-plasmo-extension",
@@ -54,7 +54,7 @@ describe("plugin protocol frames", () => {
   it("detects handshake acknowledgements", () => {
     expect(
       isHandshakeAck({
-        type: "reshape.plugin.handshake_ack",
+        type: "reshape.rpc.handshake_ack",
         protocolVersion: "1.0",
         schemaVersion: "1.0",
         sessionKey: "local:main"

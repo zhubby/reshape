@@ -11,9 +11,9 @@ fn exports_typescript_bindings_for_plugin_protocol() {
 
     let content = std::fs::read_to_string(output).unwrap();
 
-    assert!(content.contains("export type PluginHandshake"));
-    assert!(content.contains("export type PluginHandshakeAck"));
+    assert!(content.contains("export type RpcHandshake"));
+    assert!(content.contains("export type RpcHandshakeAck"));
     assert!(content.contains("export type RpcOutput"));
     assert!(content.contains("export type ErrorCode"));
-    assert!(content.contains("reshape.plugin.handshake_ack"));
+    assert!(content.contains("reshape.rpc.handshake_ack"));
 }

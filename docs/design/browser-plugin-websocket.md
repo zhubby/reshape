@@ -7,17 +7,18 @@ The browser plugin provides a floating conversation window and forwards user mes
 ## Connection Contract
 
 - The CLI process owns the WebSocket server.
-- The plugin connects to `ws://127.0.0.1:<port>/v1/plugin` by default.
+- The plugin connects to `ws://127.0.0.1:<port>/v1/rpc` by default.
 - The popup lets the user configure the RPC address. `127.0.0.1:7331` is
-  normalized to `ws://127.0.0.1:7331/v1/plugin`.
-- The first message is a handshake containing plugin version, tab ID, current URL, and optional page title.
+  normalized to `ws://127.0.0.1:7331/v1/rpc`.
+- The first message must be the RPC handshake frame containing client version,
+  tab ID, current URL, and optional page title.
 - The CLI responds with accepted protocol version and the fixed session key `local:main`.
 
-Handshake request:
+RPC handshake request:
 
 ```json
 {
-  "type": "reshape.plugin.handshake",
+  "type": "reshape.rpc.handshake",
   "protocolVersion": "1.0",
   "client": {
     "name": "reshape-plasmo-extension",
@@ -31,11 +32,11 @@ Handshake request:
 }
 ```
 
-Handshake acknowledgement:
+RPC handshake acknowledgement:
 
 ```json
 {
-  "type": "reshape.plugin.handshake_ack",
+  "type": "reshape.rpc.handshake_ack",
   "protocolVersion": "1.0",
   "schemaVersion": "1.0",
   "sessionKey": "local:main"

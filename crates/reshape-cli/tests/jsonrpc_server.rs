@@ -31,7 +31,7 @@ fn rpc_server_startup_log_includes_listening_address() {
 }
 
 #[tokio::test]
-async fn websocket_ping_returns_jsonrpc_result() {
+async fn websocket_requires_rpc_handshake_before_ping() {
     let (addr, _workspace, task) = spawn_server().await;
     let (mut socket, _) = connect_async(format!("ws://{addr}/v1/rpc")).await.unwrap();
 
@@ -44,17 +44,25 @@ async fn websocket_ping_returns_jsonrpc_result() {
 
     let response = next_json(&mut socket).await;
 
-    assert_eq!(response["jsonrpc"], "2.0");
-    assert_eq!(response["id"], "ping-1");
-    assert_eq!(response["result"]["ok"], true);
-    assert_eq!(response["result"]["schemaVersion"], "1.0");
+    assert_eq!(response["error"]["code"], -32600);
+    assert!(
+        response["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("rpc handshake required")
+    );
     task.abort();
 }
 
 #[tokio::test]
-async fn websocket_input_runs_agent_turn_and_returns_completed_output() {
+async fn websocket_input_runs_agent_turn_after_rpc_handshake() {
     let (addr, workspace, task) = spawn_server().await;
     let (mut socket, _) = connect_async(format!("ws://{addr}/v1/rpc")).await.unwrap();
+
+    send_handshake(&mut socket).await;
+    let ack = next_json(&mut socket).await;
+    assert_eq!(ack["type"], "reshape.rpc.handshake_ack");
+    assert_eq!(ack["sessionKey"], "local:main");
 
     socket
         .send(Message::Text(
@@ -111,76 +119,28 @@ async fn websocket_binary_frame_returns_invalid_request_error() {
 }
 
 #[tokio::test]
-async fn plugin_websocket_requires_handshake_before_jsonrpc_input() {
+async fn plugin_path_is_not_a_separate_websocket_endpoint() {
     let (addr, _workspace, task) = spawn_server().await;
-    let (mut socket, _) = connect_async(format!("ws://{addr}/v1/plugin"))
-        .await
-        .unwrap();
 
-    socket
-        .send(Message::Text(
-            r#"{"jsonrpc":"2.0","id":"turn-1","method":"reshape.input","params":{"input":{"type":"user_text","text":"create a page"}}}"#.into(),
-        ))
-        .await
-        .unwrap();
+    let result = connect_async(format!("ws://{addr}/v1/plugin")).await;
 
-    let response = next_json(&mut socket).await;
-
-    assert_eq!(response["error"]["code"], -32600);
-    assert!(
-        response["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("plugin handshake required")
-    );
+    assert!(result.is_err());
     task.abort();
 }
 
 #[tokio::test]
-async fn plugin_websocket_accepts_input_after_handshake() {
-    let (addr, workspace, task) = spawn_server().await;
-    let (mut socket, _) = connect_async(format!("ws://{addr}/v1/plugin"))
-        .await
-        .unwrap();
+async fn rpc_websocket_accepts_ping_after_rpc_handshake() {
+    let (addr, _workspace, task) = spawn_server().await;
+    let (mut socket, _) = connect_async(format!("ws://{addr}/v1/rpc")).await.unwrap();
 
-    socket
-        .send(Message::Text(
-            r#"{
-                "type": "reshape.plugin.handshake",
-                "protocolVersion": "1.0",
-                "client": {
-                    "name": "reshape-plasmo-extension",
-                    "version": "0.1.0"
-                },
-                "tab": {
-                    "id": 123,
-                    "url": "http://127.0.0.1:7331/",
-                    "title": "Reshape"
-                }
-            }"#
-            .into(),
-        ))
-        .await
-        .unwrap();
-
+    send_handshake(&mut socket).await;
     let ack = next_json(&mut socket).await;
-    assert_eq!(ack["type"], "reshape.plugin.handshake_ack");
+    assert_eq!(ack["type"], "reshape.rpc.handshake_ack");
     assert_eq!(ack["sessionKey"], "local:main");
 
     socket
         .send(Message::Text(
-            r#"{
-                "jsonrpc": "2.0",
-                "id": "turn-1",
-                "method": "reshape.input",
-                "params": {
-                    "input": {
-                        "type": "user_text",
-                        "text": "create a page"
-                    }
-                }
-            }"#
-            .into(),
+            r#"{"jsonrpc":"2.0","id":"ping-1","method":"reshape.ping","params":{}}"#.into(),
         ))
         .await
         .unwrap();
@@ -188,9 +148,9 @@ async fn plugin_websocket_accepts_input_after_handshake() {
     let response = next_json(&mut socket).await;
 
     assert_eq!(response["jsonrpc"], "2.0");
-    assert_eq!(response["id"], "turn-1");
-    assert_eq!(response["result"]["output"]["type"], "completed");
-    assert!(workspace.path().join("index.html").exists());
+    assert_eq!(response["id"], "ping-1");
+    assert_eq!(response["result"]["ok"], true);
+    assert_eq!(response["result"]["schemaVersion"], "1.0");
     task.abort();
 }
 
@@ -217,6 +177,32 @@ async fn next_json(
     let message = socket.next().await.unwrap().unwrap();
     let text = message.to_text().unwrap();
     serde_json::from_str(text).unwrap()
+}
+
+async fn send_handshake(
+    socket: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+) {
+    socket
+        .send(Message::Text(
+            r#"{
+                "type": "reshape.rpc.handshake",
+                "protocolVersion": "1.0",
+                "client": {
+                    "name": "reshape-plasmo-extension",
+                    "version": "0.1.0"
+                },
+                "tab": {
+                    "id": 123,
+                    "url": "http://127.0.0.1:7331/",
+                    "title": "Reshape"
+                }
+            }"#
+            .into(),
+        ))
+        .await
+        .unwrap();
 }
 
 #[derive(Clone)]

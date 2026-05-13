@@ -11,10 +11,11 @@ Default JSON-RPC URL:
 ws://127.0.0.1:7331/v1/rpc
 ```
 
-Browser plugins that require a first-frame handshake use:
+Browser plugins use the same URL. They may send a reshape-owned handshake frame
+before regular JSON-RPC begins:
 
 ```text
-ws://127.0.0.1:7331/v1/plugin
+ws://127.0.0.1:7331/v1/rpc
 ```
 
 The host and port are configurable through CLI flags or the `[server]` section
@@ -25,9 +26,8 @@ in `~/.reshape/config.toml`.
 - The first protocol version supports a single runtime session: `local:main`.
 - The server binds to `127.0.0.1` by default and does not require a token.
 - One `reshape.input` request produces one JSON-RPC response.
-- `/v1/rpc` accepts JSON-RPC frames immediately.
-- `/v1/plugin` requires a `reshape.plugin.handshake` frame before JSON-RPC
-  frames on the same WebSocket connection.
+- `/v1/rpc` requires a `reshape.rpc.handshake` frame as the first client text
+  frame before later JSON-RPC frames.
 - TypeScript clients should import protocol wire types from
   `extensions/reshape/src/generated/reshape.ts`. That file is generated from
   Rust types with `ts-rs` by running
@@ -35,15 +35,17 @@ in `~/.reshape/config.toml`.
 - Streaming output types are reserved in the wire format, but the current
   runtime returns a single `OutputEvent` after each turn.
 
-## Plugin Handshake
+## RPC Handshake
 
-The plugin endpoint uses a small reshape-owned frame before JSON-RPC begins.
+All RPC clients must send a small reshape-owned frame before JSON-RPC begins.
+The handshake belongs to the RPC transport itself, not to any specific client
+type.
 
 Request:
 
 ```json
 {
-  "type": "reshape.plugin.handshake",
+  "type": "reshape.rpc.handshake",
   "protocolVersion": "1.0",
   "client": {
     "name": "reshape-plasmo-extension",
@@ -61,16 +63,16 @@ Response:
 
 ```json
 {
-  "type": "reshape.plugin.handshake_ack",
+  "type": "reshape.rpc.handshake_ack",
   "protocolVersion": "1.0",
   "schemaVersion": "1.0",
   "sessionKey": "local:main"
 }
 ```
 
-If the first `/v1/plugin` text frame is not a valid handshake, the server
+If the first text frame is not a valid `reshape.rpc.handshake`, the server
 returns a JSON-RPC invalid request or invalid params error and does not process
-agent input on that connection.
+that frame as agent input.
 
 ## Methods
 

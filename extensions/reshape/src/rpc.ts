@@ -1,11 +1,11 @@
 import {
   PLUGIN_CLIENT_NAME,
   PLUGIN_CLIENT_VERSION,
-  PLUGIN_PROTOCOL_VERSION,
+  RPC_PROTOCOL_VERSION,
   RESHAPE_SCHEMA_VERSION,
   RESHAPE_SESSION_KEY,
-  type PluginHandshakeAck,
-  type PluginHandshakeFrame,
+  type RpcHandshake,
+  type RpcHandshakeAck,
   type ReshapeInputRequest,
   type RpcOutput,
   type RpcResponse,
@@ -25,16 +25,16 @@ export function normalizeRpcAddress(address: string): string {
   const withScheme = /^[a-z]+:\/\//i.test(trimmed) ? trimmed : `ws://${trimmed}`
   const url = new URL(withScheme)
   url.protocol = url.protocol === "wss:" ? "wss:" : "ws:"
-  url.pathname = "/v1/plugin"
+  url.pathname = "/v1/rpc"
   url.search = ""
   url.hash = ""
   return url.toString()
 }
 
-export function buildHandshakeFrame(tab: TabContext = {}): PluginHandshakeFrame {
+export function buildHandshakeFrame(tab: TabContext = {}): RpcHandshake {
   return {
-    type: "reshape.plugin.handshake",
-    protocolVersion: PLUGIN_PROTOCOL_VERSION,
+    type: "reshape.rpc.handshake",
+    protocolVersion: RPC_PROTOCOL_VERSION,
     client: {
       name: PLUGIN_CLIENT_NAME,
       version: PLUGIN_CLIENT_VERSION
@@ -47,14 +47,14 @@ export function buildHandshakeFrame(tab: TabContext = {}): PluginHandshakeFrame 
   }
 }
 
-export function isHandshakeAck(value: unknown): value is PluginHandshakeAck {
+export function isHandshakeAck(value: unknown): value is RpcHandshakeAck {
   if (!value || typeof value !== "object") {
     return false
   }
-  const candidate = value as Partial<PluginHandshakeAck>
+  const candidate = value as Partial<RpcHandshakeAck>
   return (
-    candidate.type === "reshape.plugin.handshake_ack" &&
-    candidate.protocolVersion === PLUGIN_PROTOCOL_VERSION &&
+    candidate.type === "reshape.rpc.handshake_ack" &&
+    candidate.protocolVersion === RPC_PROTOCOL_VERSION &&
     candidate.schemaVersion === RESHAPE_SCHEMA_VERSION &&
     candidate.sessionKey === RESHAPE_SESSION_KEY
   )
@@ -112,7 +112,7 @@ export async function connectAndHandshake(
   const ack = await waitForJson(socket)
   if (!isHandshakeAck(ack)) {
     socket.close()
-    throw new Error("reshape plugin handshake was not accepted")
+    throw new Error("reshape rpc handshake was not accepted")
   }
   return socket
 }

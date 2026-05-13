@@ -2,19 +2,19 @@
 
 export type ErrorCode = "InvalidSchema" | "ValidationFailed" | "DuplicateMessage" | "AgentTimeout" | "ToolTimeout" | "ProviderUnavailable" | "ProviderResponseInvalid" | "ToolBudgetExceeded" | "Failed";
 
-export type PluginClient = { name: string, version: string, };
+export type RpcClient = { name: string, version: string, };
 
-export type PluginTab = { id: number | null, url: string | null, title: string | null, };
+export type RpcTabContext = { id: number | null, url: string | null, title: string | null, };
 
-export type PluginHandshake = { type: "reshape.plugin.handshake", protocolVersion: "1.0", client: PluginClient, tab: PluginTab, };
+export type RpcHandshake = { type: "reshape.rpc.handshake", protocolVersion: "1.0", client: RpcClient, tab: RpcTabContext, };
 
-export type PluginHandshakeAck = { type: "reshape.plugin.handshake_ack", protocolVersion: "1.0", schemaVersion: "1.0", sessionKey: "local:main", };
+export type RpcHandshakeAck = { type: "reshape.rpc.handshake_ack", protocolVersion: "1.0", schemaVersion: "1.0", sessionKey: "local:main", };
 
-export type PluginRequestMetadata = { client: string, tabId: number | null, url: string | null, title: string | null, };
+export type RpcRequestMetadata = { client: string, tabId: number | null, url: string | null, title: string | null, };
 
 export type ReshapeInputPayload = { "type": "user_text", text: string, };
 
-export type ReshapeInputParams = { sessionKey: "local:main", schemaVersion: "1.0", metadata: PluginRequestMetadata, input: ReshapeInputPayload, };
+export type ReshapeInputParams = { sessionKey: "local:main", schemaVersion: "1.0", metadata: RpcRequestMetadata, input: ReshapeInputPayload, };
 
 export type ReshapeInputRequest = { jsonrpc: "2.0", id: string, method: "reshape.input", params: ReshapeInputParams, };
 
