@@ -45,6 +45,29 @@ fn cli_default_config_path_is_under_reshape_home() {
 }
 
 #[test]
+fn cli_startup_initializes_reshape_directory_and_default_config() {
+    let home = tempfile::tempdir().unwrap();
+    let args = CliArgs::parse_from(["reshape", "version"]);
+
+    args.prepare_user_environment_with_home(home.path())
+        .unwrap();
+
+    let reshape_dir = home.path().join(".reshape");
+    let workspace = reshape_dir.join("workspace");
+    let config_path = reshape_dir.join("config.toml");
+    let config = std::fs::read_to_string(&config_path).unwrap();
+
+    assert!(reshape_dir.is_dir());
+    assert!(workspace.is_dir());
+    assert!(config.contains(&format!("workspace = \"{}\"", workspace.to_string_lossy())));
+    assert!(config.contains("mock_llm = true"));
+    assert!(config.contains("log_level = \"info\""));
+    assert!(config.contains("[runtime]"));
+    assert!(config.contains("max_tool_iterations = 8"));
+    assert!(config.contains("max_tool_calls = 32"));
+}
+
+#[test]
 fn cli_loads_toml_config_and_cli_overrides_it() {
     let home = tempfile::tempdir().unwrap();
     let config_workspace = home.path().join("configured-workspace");

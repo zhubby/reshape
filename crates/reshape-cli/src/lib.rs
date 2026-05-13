@@ -105,6 +105,7 @@ impl CliArgs {
     }
 
     pub fn into_config_with_home(self, home: &Path) -> Result<AppConfig> {
+        self.prepare_user_environment_with_home(home)?;
         let options = self.agent_options();
         let config_path = self.resolved_config_path_with_home(home);
         let explicit_config_path = options.config.is_some();
@@ -186,6 +187,27 @@ impl CliArgs {
         let file_config = load_file_config(&config_path, options.config.is_some())?;
         Ok(file_config.log_level.unwrap_or_else(|| "info".to_string()))
     }
+
+    pub fn prepare_user_environment_with_home(&self, home: &Path) -> Result<()> {
+        let workspace = default_app_dir(home).join("workspace");
+        std::fs::create_dir_all(&workspace)?;
+
+        let options = self.agent_options();
+        if options.config.is_some() {
+            return Ok(());
+        }
+
+        let config_path = default_app_dir(home).join("config.toml");
+        if config_path.exists() {
+            return Ok(());
+        }
+
+        if let Some(parent) = config_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&config_path, default_config_toml(&workspace))?;
+        Ok(())
+    }
 }
 
 impl AgentOptions {
@@ -207,13 +229,14 @@ impl AgentOptions {
 
 pub async fn run() -> Result<()> {
     let args = CliArgs::parse();
+    let home = dirs::home_dir()
+        .ok_or_else(|| ReshapeError::Config("could not determine user home directory".into()))?;
+    args.prepare_user_environment_with_home(&home)?;
     if matches!(args.command_kind(), CliCommand::Version) {
         println!("{}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
 
-    let home = dirs::home_dir()
-        .ok_or_else(|| ReshapeError::Config("could not determine user home directory".into()))?;
     init_logging(&args.resolved_log_level_with_home(&home)?)?;
     let browser = args.browser_renderer();
     let config = args.into_config_with_home(&home)?;
@@ -269,6 +292,20 @@ fn resolve_workspace(
 
 fn default_app_dir(home: &Path) -> PathBuf {
     home.join(".reshape")
+}
+
+fn default_config_toml(workspace: &Path) -> String {
+    format!(
+        r#"workspace = "{}"
+mock_llm = true
+log_level = "info"
+
+[runtime]
+max_tool_iterations = 8
+max_tool_calls = 32
+"#,
+        workspace.to_string_lossy()
+    )
 }
 
 pub fn build_runtime(config: AppConfig, provider: Arc<dyn LlmProvider>) -> Result<AgentRuntime> {
