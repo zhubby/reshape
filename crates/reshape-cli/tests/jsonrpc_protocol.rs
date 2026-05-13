@@ -1,4 +1,7 @@
-use reshape_cli::rpc_protocol::{JsonRpcErrorCode, RpcRequest, RpcResponse, parse_rpc_request};
+use reshape_cli::rpc_protocol::{
+    JsonRpcErrorCode, RpcRequest, RpcResponse, parse_plugin_handshake, parse_rpc_request,
+    plugin_handshake_ack,
+};
 use reshape_core::protocol::{
     DEFAULT_SCHEMA_VERSION, DEFAULT_SESSION_KEY, Envelope, InputEvent, InputSource, OutputEvent,
 };
@@ -139,4 +142,63 @@ fn numeric_jsonrpc_id_is_preserved_in_success_response() {
     let value = serde_json::to_value(response).unwrap();
 
     assert_eq!(value["id"], 7);
+}
+
+#[test]
+fn plugin_handshake_frame_parses_client_and_tab_context() {
+    let handshake = parse_plugin_handshake(
+        r#"{
+            "type": "reshape.plugin.handshake",
+            "protocolVersion": "1.0",
+            "client": {
+                "name": "reshape-plasmo-extension",
+                "version": "0.1.0"
+            },
+            "tab": {
+                "id": 123,
+                "url": "http://127.0.0.1:7331/",
+                "title": "Reshape"
+            }
+        }"#,
+    )
+    .unwrap();
+
+    assert_eq!(handshake.protocol_version, "1.0");
+    assert_eq!(handshake.client.name, "reshape-plasmo-extension");
+    assert_eq!(handshake.client.version, "0.1.0");
+    assert_eq!(handshake.tab.id, Some(123));
+    assert_eq!(
+        handshake.tab.url,
+        Some("http://127.0.0.1:7331/".to_string())
+    );
+    assert_eq!(handshake.tab.title, Some("Reshape".to_string()));
+}
+
+#[test]
+fn plugin_handshake_rejects_unsupported_protocol_version() {
+    let error = parse_plugin_handshake(
+        r#"{
+            "type": "reshape.plugin.handshake",
+            "protocolVersion": "2.0",
+            "client": {
+                "name": "reshape-plasmo-extension",
+                "version": "0.1.0"
+            }
+        }"#,
+    )
+    .unwrap_err();
+
+    assert_eq!(error.code, JsonRpcErrorCode::InvalidParams);
+    assert!(error.message.contains("unsupported plugin protocolVersion"));
+}
+
+#[test]
+fn plugin_handshake_ack_contains_session_and_schema_contract() {
+    let ack = plugin_handshake_ack();
+    let value = serde_json::to_value(ack).unwrap();
+
+    assert_eq!(value["type"], "reshape.plugin.handshake_ack");
+    assert_eq!(value["protocolVersion"], "1.0");
+    assert_eq!(value["schemaVersion"], DEFAULT_SCHEMA_VERSION);
+    assert_eq!(value["sessionKey"], DEFAULT_SESSION_KEY);
 }

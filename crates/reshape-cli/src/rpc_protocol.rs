@@ -6,6 +6,7 @@ use reshape_core::protocol::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use ts_rs::{Config, ExportError, TS};
 
 type RpcResult<T> = std::result::Result<T, RpcError>;
 
@@ -88,9 +89,11 @@ pub struct RpcRequest {
     params: Value,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
 pub struct RpcResponse {
+    #[ts(type = "\"2.0\"")]
     pub jsonrpc: &'static str,
+    #[ts(type = "string | number | null")]
     pub id: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<Value>,
@@ -98,7 +101,47 @@ pub struct RpcResponse {
     pub error: Option<RpcErrorBody>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginHandshake {
+    #[serde(rename = "type")]
+    #[ts(rename = "type", type = "\"reshape.plugin.handshake\"")]
+    pub frame_type: String,
+    #[ts(type = "\"1.0\"")]
+    pub protocol_version: String,
+    pub client: PluginClient,
+    #[serde(default)]
+    pub tab: PluginTab,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, TS)]
+pub struct PluginClient {
+    pub name: String,
+    pub version: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, TS)]
+pub struct PluginTab {
+    pub id: Option<u32>,
+    pub url: Option<String>,
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginHandshakeAck {
+    #[serde(rename = "type")]
+    #[ts(rename = "type", type = "\"reshape.plugin.handshake_ack\"")]
+    pub frame_type: String,
+    #[ts(type = "\"1.0\"")]
+    pub protocol_version: String,
+    #[ts(type = "\"1.0\"")]
+    pub schema_version: String,
+    #[ts(type = "\"local:main\"")]
+    pub session_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
 pub struct RpcResultBody {
     #[serde(rename = "schemaVersion")]
     pub schema_version: String,
@@ -109,24 +152,26 @@ pub struct RpcResultBody {
     #[serde(rename = "sessionKey")]
     pub session_key: String,
     pub output: RpcOutput,
+    #[ts(type = "Record<string, unknown>")]
     pub metadata: BTreeMap<String, Value>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
 pub struct RpcErrorBody {
+    #[ts(type = "number")]
     pub code: i64,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<RpcErrorData>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
 pub struct RpcErrorData {
     #[serde(rename = "errorCode")]
     pub error_code: ErrorCode,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RpcOutput {
     FinalMessage { text: String },
@@ -135,6 +180,69 @@ pub enum RpcOutput {
     WorkspaceFileChanged { path: String },
     Error { code: ErrorCode, message: String },
     Completed { summary: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ReshapeInputRequest {
+    #[ts(type = "\"2.0\"")]
+    pub jsonrpc: String,
+    pub id: String,
+    #[ts(type = "\"reshape.input\"")]
+    pub method: String,
+    pub params: ReshapeInputParams,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ReshapeInputParams {
+    #[ts(type = "\"local:main\"")]
+    pub session_key: String,
+    #[ts(type = "\"1.0\"")]
+    pub schema_version: String,
+    pub metadata: PluginRequestMetadata,
+    pub input: ReshapeInputPayload,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginRequestMetadata {
+    pub client: String,
+    pub tab_id: Option<u32>,
+    pub url: Option<String>,
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[serde(tag = "type")]
+pub enum ReshapeInputPayload {
+    UserText { text: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+pub struct RpcSuccessResponse {
+    #[ts(type = "\"2.0\"")]
+    pub jsonrpc: String,
+    #[ts(type = "string | number | null")]
+    pub id: Value,
+    pub result: RpcResultBody,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+pub struct RpcWireErrorResponse {
+    #[ts(type = "\"2.0\"")]
+    pub jsonrpc: String,
+    #[ts(type = "string | number | null")]
+    pub id: Value,
+    pub error: RpcErrorBody,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[serde(untagged)]
+pub enum RpcWireResponse {
+    Success(RpcSuccessResponse),
+    Error(RpcWireErrorResponse),
 }
 
 #[derive(Debug, Deserialize)]
@@ -169,6 +277,86 @@ pub fn parse_rpc_request(text: &str) -> RpcResult<RpcRequest> {
         RpcError::parse(err.to_string())
     })?;
     RpcRequest::from_json_value(value)
+}
+
+pub fn parse_plugin_handshake(text: &str) -> RpcResult<PluginHandshake> {
+    tracing::debug!(bytes = text.len(), "parsing plugin handshake frame");
+    let handshake: PluginHandshake = serde_json::from_str(text).map_err(|err| {
+        tracing::warn!(error = %err, "invalid plugin handshake frame");
+        RpcError::invalid_request(format!("plugin handshake required: {err}"))
+    })?;
+    if handshake.frame_type != "reshape.plugin.handshake" {
+        tracing::warn!(
+            frame_type = %handshake.frame_type,
+            "unsupported plugin handshake frame type"
+        );
+        return Err(RpcError::invalid_request("plugin handshake required"));
+    }
+    if handshake.protocol_version != DEFAULT_SCHEMA_VERSION {
+        tracing::warn!(
+            protocol_version = %handshake.protocol_version,
+            "unsupported plugin protocol version"
+        );
+        return Err(RpcError::invalid_params(format!(
+            "unsupported plugin protocolVersion: {}",
+            handshake.protocol_version
+        )));
+    }
+    if handshake.client.name.trim().is_empty() || handshake.client.version.trim().is_empty() {
+        tracing::warn!("plugin handshake missing client identity");
+        return Err(RpcError::invalid_params(
+            "plugin client name and version are required",
+        ));
+    }
+    tracing::debug!(
+        client_name = %handshake.client.name,
+        client_version = %handshake.client.version,
+        "plugin handshake accepted"
+    );
+    Ok(handshake)
+}
+
+#[must_use]
+pub fn plugin_handshake_ack() -> PluginHandshakeAck {
+    PluginHandshakeAck {
+        frame_type: "reshape.plugin.handshake_ack".to_string(),
+        protocol_version: DEFAULT_SCHEMA_VERSION.to_string(),
+        schema_version: DEFAULT_SCHEMA_VERSION.to_string(),
+        session_key: DEFAULT_SESSION_KEY.to_string(),
+    }
+}
+
+pub fn export_ts_bindings(output: &std::path::Path) -> std::result::Result<(), ExportError> {
+    let mut content =
+        String::from("// This file was generated by ts-rs. Do not edit this file manually.\n\n");
+    append_ts::<ErrorCode>(&mut content);
+    append_ts::<PluginClient>(&mut content);
+    append_ts::<PluginTab>(&mut content);
+    append_ts::<PluginHandshake>(&mut content);
+    append_ts::<PluginHandshakeAck>(&mut content);
+    append_ts::<PluginRequestMetadata>(&mut content);
+    append_ts::<ReshapeInputPayload>(&mut content);
+    append_ts::<ReshapeInputParams>(&mut content);
+    append_ts::<ReshapeInputRequest>(&mut content);
+    append_ts::<RpcOutput>(&mut content);
+    append_ts::<RpcErrorData>(&mut content);
+    append_ts::<RpcErrorBody>(&mut content);
+    append_ts::<RpcResultBody>(&mut content);
+    append_ts::<RpcSuccessResponse>(&mut content);
+    append_ts::<RpcWireErrorResponse>(&mut content);
+    append_ts::<RpcWireResponse>(&mut content);
+
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent).map_err(ExportError::Io)?;
+    }
+    std::fs::write(output, content).map_err(ExportError::Io)
+}
+
+fn append_ts<T: TS>(content: &mut String) {
+    let config = Config::default();
+    content.push_str("export ");
+    content.push_str(&T::decl(&config));
+    content.push_str("\n\n");
 }
 
 impl RpcRequest {

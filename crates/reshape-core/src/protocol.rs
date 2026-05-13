@@ -4,19 +4,20 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use ts_rs::TS;
 use uuid::Uuid;
 
 pub const DEFAULT_SCHEMA_VERSION: &str = "1.0";
 pub const DEFAULT_SESSION_KEY: &str = "local:main";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct Envelope<T> {
     pub header: EnvelopeHeader,
     pub metadata: BTreeMap<String, Value>,
     pub payload: T,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct EnvelopeHeader {
     pub message_id: Uuid,
     pub trace_id: Uuid,
@@ -47,15 +48,25 @@ impl<T> Envelope<T> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub enum InputEvent {
-    UserText { text: String, source: InputSource },
-    CdpUserEvent { event: CdpUserEvent },
-    PluginMessage { text: String },
-    WorkspaceChanged { path: PathBuf },
+    UserText {
+        text: String,
+        source: InputSource,
+    },
+    CdpUserEvent {
+        event: CdpUserEvent,
+    },
+    PluginMessage {
+        text: String,
+    },
+    WorkspaceChanged {
+        #[ts(type = "string")]
+        path: PathBuf,
+    },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub enum InputSource {
     Cli,
     Cdp,
@@ -64,7 +75,7 @@ pub enum InputSource {
     Test,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct CdpUserEvent {
     pub event_type: String,
     pub selector_hint: Option<String>,
@@ -72,17 +83,32 @@ pub struct CdpUserEvent {
     pub metadata: BTreeMap<String, Value>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub enum OutputEvent {
-    FinalMessage { text: String },
-    StreamChunk { text: String },
-    ToolProgress { tool_name: String, message: String },
-    WorkspaceFileChanged { path: PathBuf },
-    Error { code: ErrorCode, message: String },
-    Completed { summary: String },
+    FinalMessage {
+        text: String,
+    },
+    StreamChunk {
+        text: String,
+    },
+    ToolProgress {
+        tool_name: String,
+        message: String,
+    },
+    WorkspaceFileChanged {
+        #[ts(type = "string")]
+        path: PathBuf,
+    },
+    Error {
+        code: ErrorCode,
+        message: String,
+    },
+    Completed {
+        summary: String,
+    },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub enum ErrorCode {
     InvalidSchema,
     ValidationFailed,

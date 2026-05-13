@@ -1,2 +1,7 @@
 /target
 /docs/book
+/node_modules
+/extensions/reshape/node_modules
+/extensions/reshape/.plasmo
+/extensions/reshape/build
+/extensions/reshape/tsconfig.tsbuildinfo

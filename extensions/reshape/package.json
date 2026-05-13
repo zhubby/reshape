@@ -1,0 +1,49 @@
+{
+  "name": "reshape-extension",
+  "displayName": "Reshape",
+  "version": "0.1.0",
+  "description": "Plasmo browser extension for the local reshape RPC server.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "plasmo dev",
+    "build": "plasmo build",
+    "package": "plasmo package",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "manifest": {
+    "permissions": [
+      "activeTab",
+      "tabs",
+      "storage"
+    ],
+    "host_permissions": [
+      "http://127.0.0.1:7331/*",
+      "http://localhost:7331/*"
+    ],
+    "content_security_policy": {
+      "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' ws://127.0.0.1:7331 ws://localhost:7331"
+    }
+  },
+  "keywords": [
+    "plasmo",
+    "browser-extension",
+    "reshape"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@plasmohq/storage": "^1.15.0",
+    "plasmo": "^0.90.5",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.1.42",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
+  }
+}

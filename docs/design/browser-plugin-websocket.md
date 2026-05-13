@@ -7,20 +7,52 @@ The browser plugin provides a floating conversation window and forwards user mes
 ## Connection Contract
 
 - The CLI process owns the WebSocket server.
-- The plugin connects to `ws://127.0.0.1:<port>/plugin`.
+- The plugin connects to `ws://127.0.0.1:<port>/v1/plugin` by default.
+- The popup lets the user configure the RPC address. `127.0.0.1:7331` is
+  normalized to `ws://127.0.0.1:7331/v1/plugin`.
 - The first message is a handshake containing plugin version, tab ID, current URL, and optional page title.
 - The CLI responds with accepted protocol version and the fixed session key `local:main`.
 
+Handshake request:
+
+```json
+{
+  "type": "reshape.plugin.handshake",
+  "protocolVersion": "1.0",
+  "client": {
+    "name": "reshape-plasmo-extension",
+    "version": "0.1.0"
+  },
+  "tab": {
+    "id": 123,
+    "url": "http://127.0.0.1:7331/",
+    "title": "Reshape"
+  }
+}
+```
+
+Handshake acknowledgement:
+
+```json
+{
+  "type": "reshape.plugin.handshake_ack",
+  "protocolVersion": "1.0",
+  "schemaVersion": "1.0",
+  "sessionKey": "local:main"
+}
+```
+
 ## Message Envelope
 
-Plugin messages map to `InputEvent::PluginMessage` and should preserve:
+After the handshake, plugin chat messages are sent as JSON-RPC
+`reshape.input` frames on the same WebSocket connection. The current runtime
+maps them to `InputEvent::UserText` with `InputSource::WebSocket` while the
+plugin preserves tab context in request metadata:
 
 - user text
 - tab ID
 - URL
-- viewport size
-- optional selected text
-- client timestamp
+- optional page title
 
 Outbound runtime events can be streamed back to the plugin as:
 
