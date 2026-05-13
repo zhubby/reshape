@@ -4,6 +4,7 @@
 - [Agent System Prompt](./agent-system-prompt.md)
 - [Design Documents](./design/README.md)
   - [CDP Event Ingress](./design/cdp-event-ingress.md)
+  - [JSON-RPC WebSocket Protocol](./design/jsonrpc-websocket-protocol.md)
   - [Browser Plugin WebSocket](./design/browser-plugin-websocket.md)
   - [Browser Render Pipeline](./design/browser-render-pipeline.md)
   - [Agent Browser Source Integration](./design/agent-browser-source-integration.md)

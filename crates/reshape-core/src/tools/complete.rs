@@ -32,6 +32,10 @@ impl Tool for CompleteTaskTool {
 
     async fn execute(&self, args: Value, _context: &ToolContext) -> Result<ToolResult> {
         let args: CompleteArgs = serde_json::from_value(args)?;
+        tracing::info!(
+            summary_len = args.summary.len(),
+            "complete task tool signaled completion"
+        );
         Ok(ToolResult::complete(args.summary))
     }
 }

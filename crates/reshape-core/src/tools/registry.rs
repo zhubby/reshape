@@ -33,8 +33,13 @@ impl InMemoryToolRegistry {
     where
         T: Tool + 'static,
     {
-        self.tools
-            .insert(tool.definition().name.clone(), Arc::new(tool));
+        let definition = tool.definition();
+        tracing::debug!(
+            tool_name = %definition.name,
+            tool_count = self.tools.len(),
+            "registering tool"
+        );
+        self.tools.insert(definition.name, Arc::new(tool));
         self
     }
 }
@@ -51,11 +56,13 @@ impl ToolRegistry for InMemoryToolRegistry {
         arguments: Value,
         context: &ToolContext,
     ) -> Result<ToolResult> {
-        let tool = self
-            .tools
-            .get(name)
-            .ok_or_else(|| ReshapeError::UnknownTool(name.to_string()))?;
+        tracing::debug!(tool_name = name, "looking up tool");
+        let tool = self.tools.get(name).ok_or_else(|| {
+            tracing::warn!(tool_name = name, "unknown tool requested");
+            ReshapeError::UnknownTool(name.to_string())
+        })?;
 
+        tracing::debug!(tool_name = name, "executing tool");
         tool.execute(arguments, context).await
     }
 }

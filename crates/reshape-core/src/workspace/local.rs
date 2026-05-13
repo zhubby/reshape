@@ -16,16 +16,19 @@ pub struct LocalWorkspace {
 impl LocalWorkspace {
     pub fn new(root: impl Into<PathBuf>) -> Result<Self> {
         let root = root.into();
+        tracing::debug!(root = %root.display(), "initializing local workspace");
         if !root.exists() {
+            tracing::warn!(root = %root.display(), "workspace root is missing");
             return Err(ReshapeError::WorkspaceMissing(root));
         }
         if !root.is_dir() {
+            tracing::warn!(root = %root.display(), "workspace root is not a directory");
             return Err(ReshapeError::WorkspaceNotDirectory(root));
         }
 
-        Ok(Self {
-            root: root.canonicalize()?,
-        })
+        let canonical = root.canonicalize()?;
+        tracing::info!(root = %canonical.display(), "local workspace initialized");
+        Ok(Self { root: canonical })
     }
 
     fn relative_path<'a>(&self, path: &'a str) -> Result<&'a Path> {
@@ -34,6 +37,7 @@ impl LocalWorkspace {
             .components()
             .any(|component| matches!(component, Component::ParentDir | Component::RootDir))
         {
+            tracing::warn!(path, "workspace path escapes root");
             return Err(ReshapeError::WorkspacePathEscapesRoot(
                 relative.to_path_buf(),
             ));
@@ -45,6 +49,7 @@ impl LocalWorkspace {
             Some("html" | "htm" | "js" | "css" | "json" | "md" | "txt")
         );
         if !supported {
+            tracing::warn!(path, "unsupported workspace file type");
             return Err(ReshapeError::UnsupportedWorkspaceFile(
                 relative.to_path_buf(),
             ));
@@ -58,6 +63,7 @@ impl LocalWorkspace {
         let candidate = self.root.join(relative);
         let canonical = candidate.canonicalize()?;
         if !canonical.starts_with(&self.root) {
+            tracing::warn!(path, "existing workspace path resolves outside root");
             return Err(ReshapeError::WorkspacePathEscapesRoot(
                 relative.to_path_buf(),
             ));
@@ -71,6 +77,7 @@ impl LocalWorkspace {
         let candidate = self.root.join(relative);
         if let Ok(metadata) = tokio::fs::symlink_metadata(&candidate).await {
             if metadata.file_type().is_symlink() {
+                tracing::warn!(path, "refusing to write through workspace symlink");
                 return Err(ReshapeError::WorkspacePathEscapesRoot(
                     relative.to_path_buf(),
                 ));
@@ -78,6 +85,7 @@ impl LocalWorkspace {
 
             let canonical = candidate.canonicalize()?;
             if !canonical.starts_with(&self.root) {
+                tracing::warn!(path, "workspace write path resolves outside root");
                 return Err(ReshapeError::WorkspacePathEscapesRoot(
                     relative.to_path_buf(),
                 ));
@@ -88,6 +96,7 @@ impl LocalWorkspace {
             tokio::fs::create_dir_all(parent).await?;
             let canonical_parent = parent.canonicalize()?;
             if !canonical_parent.starts_with(&self.root) {
+                tracing::warn!(path, "workspace write parent resolves outside root");
                 return Err(ReshapeError::WorkspacePathEscapesRoot(
                     relative.to_path_buf(),
                 ));
@@ -111,6 +120,7 @@ impl Workspace for LocalWorkspace {
     }
 
     async fn list_files(&self) -> Result<Vec<PathBuf>> {
+        tracing::debug!(root = %self.root.display(), "listing workspace files");
         let mut files = Vec::new();
         let mut dirs = vec![self.root.clone()];
 
@@ -134,23 +144,41 @@ impl Workspace for LocalWorkspace {
         }
 
         files.sort();
+        tracing::debug!(file_count = files.len(), "listed workspace files");
         Ok(files)
     }
 
     async fn read_text(&self, path: &str) -> Result<String> {
-        Ok(tokio::fs::read_to_string(self.resolve_existing(path)?).await?)
+        tracing::debug!(path, "reading workspace text file");
+        let content = tokio::fs::read_to_string(self.resolve_existing(path)?).await?;
+        tracing::debug!(
+            path,
+            content_len = content.len(),
+            "read workspace text file"
+        );
+        Ok(content)
     }
 
     async fn write_text(&self, path: &str, content: &str) -> Result<PathBuf> {
+        tracing::debug!(
+            path,
+            content_len = content.len(),
+            "writing workspace text file"
+        );
         let path = self.resolve_for_write(path).await?;
         tokio::fs::write(&path, content).await?;
-        Ok(self.strip_root(path))
+        let relative = self.strip_root(path);
+        tracing::info!(path = %relative.display(), "wrote workspace text file");
+        Ok(relative)
     }
 
     async fn delete_file(&self, path: &str) -> Result<PathBuf> {
+        tracing::debug!(path, "deleting workspace file");
         let path = self.resolve_existing(path)?;
         tokio::fs::remove_file(&path).await?;
-        Ok(self.strip_root(path))
+        let relative = self.strip_root(path);
+        tracing::info!(path = %relative.display(), "deleted workspace file");
+        Ok(relative)
     }
 }
 
@@ -161,17 +189,22 @@ pub struct LocalWorkspaceWatcher {
 
 impl LocalWorkspaceWatcher {
     pub fn new(root: impl AsRef<Path>) -> Result<Self> {
+        tracing::debug!(root = %root.as_ref().display(), "initializing workspace watcher");
         let (tx, rx) = mpsc::channel(64);
         let mut watcher =
-            notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-                if let Ok(event) = event {
+            notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
+                Ok(event) => {
                     for path in event.paths {
                         let _ = tx.blocking_send(path);
                     }
                 }
+                Err(error) => {
+                    tracing::warn!(%error, "workspace watcher received notify error");
+                }
             })?;
 
         watcher.watch(root.as_ref(), RecursiveMode::Recursive)?;
+        tracing::info!(root = %root.as_ref().display(), "workspace watcher initialized");
 
         Ok(Self {
             rx,
@@ -185,10 +218,12 @@ impl WorkspaceWatcher for LocalWorkspaceWatcher {
     async fn next_change(&mut self) -> Result<Option<PathBuf>> {
         while let Some(path) = self.rx.recv().await {
             if path.is_file() {
+                tracing::debug!(path = %path.display(), "workspace watcher observed file change");
                 return Ok(Some(path));
             }
         }
 
+        tracing::debug!("workspace watcher stream ended");
         Ok(None)
     }
 }

@@ -101,7 +101,9 @@ impl Tool for FileTool {
     async fn execute(&self, args: Value, context: &ToolContext) -> Result<ToolResult> {
         match self.kind {
             FileToolKind::List => {
+                tracing::debug!("file tool listing workspace files");
                 let files = context.workspace.list_files().await?;
+                tracing::debug!(file_count = files.len(), "file tool listed workspace files");
                 Ok(ToolResult::success(
                     files
                         .into_iter()
@@ -112,16 +114,23 @@ impl Tool for FileTool {
             }
             FileToolKind::Read => {
                 let args: PathArgs = serde_json::from_value(args)?;
+                tracing::debug!(path = %args.path, "file tool reading workspace file");
                 Ok(ToolResult::success(
                     context.workspace.read_text(&args.path).await?,
                 ))
             }
             FileToolKind::Write => {
                 let args: WriteArgs = serde_json::from_value(args)?;
+                tracing::debug!(
+                    path = %args.path,
+                    content_len = args.content.len(),
+                    "file tool writing workspace file"
+                );
                 let path = context
                     .workspace
                     .write_text(&args.path, &args.content)
                     .await?;
+                tracing::info!(path = %path.display(), "file tool wrote workspace file");
                 Ok(ToolResult::success(format!(
                     "wrote {}",
                     path.to_string_lossy()
@@ -129,7 +138,9 @@ impl Tool for FileTool {
             }
             FileToolKind::Delete => {
                 let args: PathArgs = serde_json::from_value(args)?;
+                tracing::debug!(path = %args.path, "file tool deleting workspace file");
                 let path = context.workspace.delete_file(&args.path).await?;
+                tracing::info!(path = %path.display(), "file tool deleted workspace file");
                 Ok(ToolResult::success(format!(
                     "deleted {}",
                     path.to_string_lossy()

@@ -60,6 +60,7 @@ pub enum InputSource {
     Cli,
     Cdp,
     Plugin,
+    WebSocket,
     Test,
 }
 

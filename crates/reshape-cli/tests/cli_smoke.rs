@@ -26,7 +26,7 @@ fn cli_default_workspace_is_created_under_reshape_home() {
     let home = tempfile::tempdir().unwrap();
     let args = CliArgs::parse_from(["reshape"]);
 
-    let config = args.into_config_with_home(home.path()).unwrap();
+    let config = args.clone().into_config_with_home(home.path()).unwrap();
 
     let workspace = home.path().join(".reshape").join("workspace");
     assert_eq!(config.workspace.root, workspace);
@@ -65,6 +65,9 @@ fn cli_startup_initializes_reshape_directory_and_default_config() {
     assert!(config.contains("[runtime]"));
     assert!(config.contains("max_tool_iterations = 8"));
     assert!(config.contains("max_tool_calls = 32"));
+    assert!(config.contains("[server]"));
+    assert!(config.contains("host = \"127.0.0.1\""));
+    assert!(config.contains("port = 7331"));
 }
 
 #[test]
@@ -87,6 +90,10 @@ mock_llm = false
 [runtime]
 max_tool_iterations = 3
 max_tool_calls = 9
+
+[server]
+host = "127.0.0.1"
+port = 7331
 "#,
             config_workspace.to_string_lossy()
         ),
@@ -99,14 +106,31 @@ max_tool_calls = 9
         cli_workspace.to_str().unwrap(),
         "--model",
         "cli-model",
+        "--host",
+        "127.0.0.2",
+        "--port",
+        "7332",
     ]);
-    let config = args.into_config_with_home(home.path()).unwrap();
+    let config = args.clone().into_config_with_home(home.path()).unwrap();
+    let server = args.server_config_with_home(home.path()).unwrap();
 
     assert_eq!(config.workspace.root, cli_workspace);
     assert_eq!(config.llm.model.as_deref(), Some("cli-model"));
     assert!(!config.llm.use_mock);
     assert_eq!(config.runtime.max_tool_iterations, 3);
     assert_eq!(config.runtime.max_tool_calls, 9);
+    assert_eq!(server.host, "127.0.0.2");
+    assert_eq!(server.port, 7332);
+}
+
+#[test]
+fn cli_rejects_non_loopback_server_host() {
+    let home = tempfile::tempdir().unwrap();
+    let args = CliArgs::parse_from(["reshape", "--host", "0.0.0.0"]);
+
+    let error = args.server_config_with_home(home.path()).unwrap_err();
+
+    assert!(error.to_string().contains("loopback"));
 }
 
 #[test]

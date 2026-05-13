@@ -53,11 +53,26 @@ impl LlmProvider for MockLlmProvider {
         tools: Vec<ToolDefinition>,
         _options: ChatOptions,
     ) -> Result<LlmResponse> {
+        tracing::debug!(
+            provider = self.name(),
+            message_count = messages.len(),
+            tool_count = tools.len(),
+            "mock llm chat requested"
+        );
         if let Some(response) = self.responses.lock().await.pop_front() {
+            tracing::debug!(
+                provider = self.name(),
+                tool_call_count = response.tool_calls.len(),
+                "mock llm returning queued response"
+            );
             return Ok(response);
         }
 
         if !tools.iter().any(|tool| tool.name == "write_file") {
+            tracing::debug!(
+                provider = self.name(),
+                "mock llm returning default response without file tool"
+            );
             return Ok(self.default.clone());
         }
 
@@ -66,6 +81,10 @@ impl LlmProvider for MockLlmProvider {
             .any(|message| matches!(message.role, ChatRole::Tool));
 
         if saw_tool_result {
+            tracing::debug!(
+                provider = self.name(),
+                "mock llm returning completion tool call"
+            );
             return Ok(LlmResponse {
                 content: "Completing mock page generation".to_string(),
                 tool_calls: vec![ToolCall {
@@ -78,6 +97,11 @@ impl LlmProvider for MockLlmProvider {
 
         let mut turns = self.fallback_turns.lock().await;
         *turns += 1;
+        tracing::debug!(
+            provider = self.name(),
+            turn = *turns,
+            "mock llm returning write_file tool call"
+        );
         Ok(LlmResponse {
             content: "Creating mock page".to_string(),
             tool_calls: vec![ToolCall {

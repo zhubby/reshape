@@ -49,6 +49,7 @@ impl Default for AppConfig {
 impl AppConfig {
     pub fn for_workspace(path: impl AsRef<Path>) -> Result<Self> {
         let root = validate_workspace(path.as_ref())?;
+        tracing::debug!(workspace = %root.display(), "building app config for workspace");
 
         Ok(Self {
             workspace: WorkspaceConfig { root },
@@ -68,13 +69,17 @@ impl AppConfig {
 }
 
 pub fn validate_workspace(path: &Path) -> Result<PathBuf> {
+    tracing::debug!(path = %path.display(), "validating workspace path");
     if !path.exists() {
+        tracing::warn!(path = %path.display(), "workspace validation failed: missing");
         return Err(ReshapeError::WorkspaceMissing(path.to_path_buf()));
     }
 
     if !path.is_dir() {
+        tracing::warn!(path = %path.display(), "workspace validation failed: not a directory");
         return Err(ReshapeError::WorkspaceNotDirectory(path.to_path_buf()));
     }
 
+    tracing::debug!(path = %path.display(), "workspace path validated");
     Ok(path.to_path_buf())
 }

@@ -30,14 +30,22 @@ where
             let mut line = String::new();
             let bytes = self.reader.read_line(&mut line).await?;
             if bytes == 0 {
+                tracing::debug!(ingress = self.name(), "stdin ingress reached eof");
                 return Ok(None);
             }
 
             let text = line.trim().to_string();
             if text.is_empty() {
+                tracing::debug!(ingress = self.name(), "stdin ingress skipped blank line");
                 continue;
             }
 
+            tracing::debug!(
+                ingress = self.name(),
+                bytes,
+                text_len = text.len(),
+                "stdin ingress produced user text event"
+            );
             return Ok(Some(InputEvent::UserText {
                 text,
                 source: InputSource::Cli,

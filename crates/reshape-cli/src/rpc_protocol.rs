@@ -1,0 +1,365 @@
+use std::collections::BTreeMap;
+
+use reshape_core::protocol::{
+    DEFAULT_SCHEMA_VERSION, DEFAULT_SESSION_KEY, Envelope, ErrorCode, InputEvent, InputSource,
+    OutputEvent,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+type RpcResult<T> = std::result::Result<T, RpcError>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JsonRpcErrorCode {
+    ParseError,
+    InvalidRequest,
+    MethodNotFound,
+    InvalidParams,
+    ServerError,
+}
+
+impl JsonRpcErrorCode {
+    #[must_use]
+    pub fn as_i64(self) -> i64 {
+        match self {
+            Self::ParseError => -32700,
+            Self::InvalidRequest => -32600,
+            Self::MethodNotFound => -32601,
+            Self::InvalidParams => -32602,
+            Self::ServerError => -32000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RpcError {
+    pub code: JsonRpcErrorCode,
+    pub message: String,
+    pub error_code: ErrorCode,
+}
+
+impl RpcError {
+    fn parse(message: impl Into<String>) -> Self {
+        Self {
+            code: JsonRpcErrorCode::ParseError,
+            message: message.into(),
+            error_code: ErrorCode::InvalidSchema,
+        }
+    }
+
+    pub fn invalid_request(message: impl Into<String>) -> Self {
+        Self {
+            code: JsonRpcErrorCode::InvalidRequest,
+            message: message.into(),
+            error_code: ErrorCode::InvalidSchema,
+        }
+    }
+
+    fn method_not_found(method: &str) -> Self {
+        Self {
+            code: JsonRpcErrorCode::MethodNotFound,
+            message: format!("method not found: {method}"),
+            error_code: ErrorCode::ValidationFailed,
+        }
+    }
+
+    fn invalid_params(message: impl Into<String>) -> Self {
+        Self {
+            code: JsonRpcErrorCode::InvalidParams,
+            message: message.into(),
+            error_code: ErrorCode::ValidationFailed,
+        }
+    }
+
+    #[must_use]
+    pub fn server(message: impl Into<String>) -> Self {
+        Self {
+            code: JsonRpcErrorCode::ServerError,
+            message: message.into(),
+            error_code: ErrorCode::Failed,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RpcRequest {
+    pub id: Value,
+    pub method: String,
+    params: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RpcResponse {
+    pub jsonrpc: &'static str,
+    pub id: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<RpcErrorBody>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RpcResultBody {
+    #[serde(rename = "schemaVersion")]
+    pub schema_version: String,
+    #[serde(rename = "messageId")]
+    pub message_id: String,
+    #[serde(rename = "traceId")]
+    pub trace_id: String,
+    #[serde(rename = "sessionKey")]
+    pub session_key: String,
+    pub output: RpcOutput,
+    pub metadata: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RpcErrorBody {
+    pub code: i64,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<RpcErrorData>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RpcErrorData {
+    #[serde(rename = "errorCode")]
+    pub error_code: ErrorCode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum RpcOutput {
+    FinalMessage { text: String },
+    StreamChunk { text: String },
+    ToolProgress { tool_name: String, message: String },
+    WorkspaceFileChanged { path: String },
+    Error { code: ErrorCode, message: String },
+    Completed { summary: String },
+}
+
+#[derive(Debug, Deserialize)]
+struct JsonRpcRequestBody {
+    jsonrpc: String,
+    id: Option<Value>,
+    method: Option<String>,
+    #[serde(default)]
+    params: Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InputParams {
+    session_key: Option<String>,
+    schema_version: Option<String>,
+    #[serde(default)]
+    metadata: BTreeMap<String, Value>,
+    input: Option<RpcInput>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum RpcInput {
+    UserText { text: String },
+}
+
+pub fn parse_rpc_request(text: &str) -> RpcResult<RpcRequest> {
+    tracing::debug!(bytes = text.len(), "parsing json-rpc request");
+    let value = serde_json::from_str(text).map_err(|err| {
+        tracing::warn!(error = %err, "failed to parse json-rpc request");
+        RpcError::parse(err.to_string())
+    })?;
+    RpcRequest::from_json_value(value)
+}
+
+impl RpcRequest {
+    pub fn from_json_value(value: Value) -> RpcResult<Self> {
+        if !value.is_object() {
+            return Err(RpcError::invalid_request("request must be a JSON object"));
+        }
+
+        let body: JsonRpcRequestBody = serde_json::from_value(value).map_err(|err| {
+            tracing::warn!(error = %err, "invalid json-rpc request shape");
+            RpcError::invalid_request(err.to_string())
+        })?;
+        if body.jsonrpc != "2.0" {
+            tracing::warn!(jsonrpc = %body.jsonrpc, "unsupported json-rpc version");
+            return Err(RpcError::invalid_request("jsonrpc must be 2.0"));
+        }
+
+        let id = body
+            .id
+            .ok_or_else(|| RpcError::invalid_request("id is required"))?;
+        if !is_valid_id(&id) {
+            tracing::warn!(id = %id, "invalid json-rpc id type");
+            return Err(RpcError::invalid_request(
+                "id must be a string, number, or null",
+            ));
+        }
+        let method = body
+            .method
+            .ok_or_else(|| RpcError::invalid_request("method is required"))?;
+        tracing::debug!(method = %method, id = %id, "json-rpc request decoded");
+
+        Ok(Self {
+            id,
+            method,
+            params: body.params,
+        })
+    }
+
+    pub fn into_input_envelope(self) -> RpcResult<Envelope<InputEvent>> {
+        if self.method != "reshape.input" {
+            tracing::warn!(method = %self.method, "json-rpc method not found");
+            return Err(RpcError::method_not_found(&self.method));
+        }
+
+        let params: InputParams = serde_json::from_value(self.params).map_err(|err| {
+            let message = input_params_error(err);
+            tracing::warn!(reason = %message, "invalid reshape.input params");
+            RpcError::invalid_params(message)
+        })?;
+        let session_key = params
+            .session_key
+            .unwrap_or_else(|| DEFAULT_SESSION_KEY.to_string());
+        if session_key != DEFAULT_SESSION_KEY {
+            tracing::warn!(session_key, "unsupported json-rpc session key");
+            return Err(RpcError::invalid_params(format!(
+                "unsupported sessionKey: {session_key}"
+            )));
+        }
+
+        if let Some(schema_version) = params.schema_version
+            && schema_version != DEFAULT_SCHEMA_VERSION
+        {
+            tracing::warn!(schema_version, "unsupported json-rpc schema version");
+            return Err(RpcError::invalid_params(format!(
+                "unsupported schemaVersion: {schema_version}"
+            )));
+        }
+
+        let input = params
+            .input
+            .ok_or_else(|| RpcError::invalid_params("input is required"))?;
+        let event = input.into_input_event();
+        let mut envelope = Envelope::for_session(session_key, event);
+        envelope.metadata = params.metadata;
+        envelope
+            .metadata
+            .insert("jsonrpc_id".to_string(), metadata_id(&self.id));
+        tracing::debug!(
+            message_id = %envelope.header.message_id,
+            trace_id = %envelope.header.trace_id,
+            "json-rpc request converted to input envelope"
+        );
+        Ok(envelope)
+    }
+}
+
+impl RpcResponse {
+    #[must_use]
+    pub fn success(id: impl Into<Value>, envelope: Envelope<OutputEvent>) -> Self {
+        let result = RpcResultBody {
+            schema_version: envelope.header.schema_version,
+            message_id: envelope.header.message_id.to_string(),
+            trace_id: envelope.header.trace_id.to_string(),
+            session_key: envelope.header.session_key,
+            output: RpcOutput::from(envelope.payload),
+            metadata: envelope.metadata,
+        };
+        Self {
+            jsonrpc: "2.0",
+            id: id.into(),
+            result: serde_json::to_value(result).ok(),
+            error: None,
+        }
+    }
+
+    #[must_use]
+    pub fn raw_success(id: impl Into<Value>, result: Value) -> Self {
+        Self {
+            jsonrpc: "2.0",
+            id: id.into(),
+            result: Some(result),
+            error: None,
+        }
+    }
+
+    #[must_use]
+    pub fn error(id: Option<Value>, error: RpcError) -> Self {
+        Self {
+            jsonrpc: "2.0",
+            id: id.unwrap_or(Value::Null),
+            result: None,
+            error: Some(RpcErrorBody {
+                code: error.code.as_i64(),
+                message: error.message,
+                data: Some(RpcErrorData {
+                    error_code: error.error_code,
+                }),
+            }),
+        }
+    }
+
+    #[must_use]
+    pub fn ping(id: impl Into<Value>) -> Self {
+        Self::raw_success(
+            id,
+            serde_json::json!({
+                "ok": true,
+                "schemaVersion": DEFAULT_SCHEMA_VERSION,
+            }),
+        )
+    }
+}
+
+impl RpcInput {
+    fn into_input_event(self) -> InputEvent {
+        match self {
+            Self::UserText { text } => InputEvent::UserText {
+                text,
+                source: InputSource::WebSocket,
+            },
+        }
+    }
+}
+
+impl From<OutputEvent> for RpcOutput {
+    fn from(output: OutputEvent) -> Self {
+        match output {
+            OutputEvent::FinalMessage { text } => Self::FinalMessage { text },
+            OutputEvent::StreamChunk { text } => Self::StreamChunk { text },
+            OutputEvent::ToolProgress { tool_name, message } => {
+                Self::ToolProgress { tool_name, message }
+            }
+            OutputEvent::WorkspaceFileChanged { path } => Self::WorkspaceFileChanged {
+                path: path.to_string_lossy().to_string(),
+            },
+            OutputEvent::Error { code, message } => Self::Error { code, message },
+            OutputEvent::Completed { summary } => Self::Completed { summary },
+        }
+    }
+}
+
+fn is_valid_id(value: &Value) -> bool {
+    matches!(value, Value::String(_) | Value::Number(_) | Value::Null)
+}
+
+fn input_params_error(error: serde_json::Error) -> String {
+    let message = error.to_string();
+    if message.contains("missing field `text`") {
+        "input.text is required".to_string()
+    } else if message.contains("unknown variant") {
+        format!("invalid params: unsupported input.type ({message})")
+    } else {
+        format!("invalid params: {message}")
+    }
+}
+
+fn metadata_id(value: &Value) -> Value {
+    match value {
+        Value::String(value) => Value::String(value.clone()),
+        Value::Number(value) => Value::String(value.to_string()),
+        Value::Null => Value::Null,
+        _ => Value::Null,
+    }
+}

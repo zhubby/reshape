@@ -21,10 +21,23 @@ pub struct InMemorySessionStore {
 #[async_trait]
 impl SessionStore for InMemorySessionStore {
     async fn load(&self) -> Result<Session> {
-        Ok(self.session.lock().await.clone())
+        let session = self.session.lock().await.clone();
+        tracing::debug!(
+            session_key = %session.session_key,
+            turn_index = session.turn_index,
+            history_len = session.history.len(),
+            "loaded session"
+        );
+        Ok(session)
     }
 
     async fn save(&self, session: Session) -> Result<()> {
+        tracing::debug!(
+            session_key = %session.session_key,
+            turn_index = session.turn_index,
+            history_len = session.history.len(),
+            "saving session"
+        );
         *self.session.lock().await = session;
         Ok(())
     }
