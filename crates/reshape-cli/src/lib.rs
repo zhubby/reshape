@@ -306,9 +306,10 @@ pub async fn run() -> Result<()> {
 
     let server_config = args.server_config_with_home(&home)?;
     let config = args.clone().into_config_with_home(&home)?;
+    let workspace_root = config.workspace.root.clone();
     let runtime = build_runtime(config, Arc::new(MockLlmProvider::default()))?;
     let listener = TcpListener::bind(server_config.bind_addr()?).await?;
-    rpc_server::serve_rpc_listener(listener, runtime).await
+    rpc_server::serve_rpc_listener(listener, runtime, workspace_root).await
 }
 
 pub fn init_logging(log_level: &str) -> Result<()> {

@@ -1,6 +1,10 @@
+use std::path::{Component, Path, PathBuf};
+
 use axum::Router;
-use axum::extract::State;
+use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::{OriginalUri, State};
+use axum::http::{StatusCode, header};
 use axum::response::Response;
 use axum::routing::get;
 use futures_util::{SinkExt, StreamExt};
@@ -19,6 +23,7 @@ const AGENT_QUEUE_CAPACITY: usize = 32;
 #[derive(Clone)]
 struct RpcServerState {
     agent_tx: mpsc::Sender<AgentRequest>,
+    workspace_root: PathBuf,
 }
 
 struct AgentRequest {
@@ -26,10 +31,14 @@ struct AgentRequest {
     response_tx: oneshot::Sender<std::result::Result<Envelope<OutputEvent>, RpcError>>,
 }
 
-pub async fn serve_rpc_listener(listener: TcpListener, runtime: AgentRuntime) -> Result<()> {
+pub async fn serve_rpc_listener(
+    listener: TcpListener,
+    runtime: AgentRuntime,
+    workspace_root: impl Into<PathBuf>,
+) -> Result<()> {
     let addr = listener.local_addr()?;
     log_server_listening(addr);
-    let app = rpc_router(runtime);
+    let app = rpc_router(runtime, workspace_root.into().canonicalize()?);
     axum::serve(listener, app).await.map_err(|error| {
         tracing::error!(%error, "json-rpc websocket server stopped with error");
         std::io::Error::other(error).into()
@@ -40,7 +49,7 @@ pub fn log_server_listening(addr: std::net::SocketAddr) {
     tracing::info!("json-rpc websocket server listening on {addr}");
 }
 
-pub fn rpc_router(runtime: AgentRuntime) -> Router {
+pub fn rpc_router(runtime: AgentRuntime, workspace_root: PathBuf) -> Router {
     let (agent_tx, agent_rx) = mpsc::channel(AGENT_QUEUE_CAPACITY);
     tracing::debug!(
         capacity = AGENT_QUEUE_CAPACITY,
@@ -49,12 +58,48 @@ pub fn rpc_router(runtime: AgentRuntime) -> Router {
     tokio::spawn(run_agent_worker(runtime, agent_rx));
     Router::new()
         .route("/v1/rpc", get(ws_handler))
-        .with_state(RpcServerState { agent_tx })
+        .fallback(get(static_handler))
+        .with_state(RpcServerState {
+            agent_tx,
+            workspace_root,
+        })
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<RpcServerState>) -> Response {
     tracing::debug!("websocket upgrade accepted for json-rpc endpoint");
     ws.on_upgrade(|socket| handle_socket(socket, state))
+}
+
+async fn static_handler(
+    State(state): State<RpcServerState>,
+    OriginalUri(uri): OriginalUri,
+) -> Response {
+    match resolve_static_path(&state.workspace_root, uri.path()).await {
+        Ok(Some(path)) => match tokio::fs::read(&path).await {
+            Ok(content) => Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, content_type(&path))
+                .body(Body::from(content))
+                .unwrap_or_else(|error| {
+                    Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body(Body::from(error.to_string()))
+                        .unwrap_or_else(|_| Response::new(Body::empty()))
+                }),
+            Err(error) => Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(Body::from(error.to_string()))
+                .unwrap_or_else(|_| Response::new(Body::empty())),
+        },
+        Ok(None) => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::from("not found"))
+            .unwrap_or_else(|_| Response::new(Body::empty())),
+        Err(error) => Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Body::from(error))
+            .unwrap_or_else(|_| Response::new(Body::empty())),
+    }
 }
 
 async fn handle_socket(socket: WebSocket, state: RpcServerState) {
@@ -221,4 +266,61 @@ fn rpc_handshake_ack_to_text() -> String {
             r#"{{"jsonrpc":"2.0","error":{{"code":-32000,"message":"failed to serialize rpc handshake ack: {error}"}}}}"#
         )
     })
+}
+
+async fn resolve_static_path(
+    workspace_root: &Path,
+    request_path: &str,
+) -> std::result::Result<Option<PathBuf>, String> {
+    let relative = request_path.trim_start_matches('/');
+    let relative = if relative.is_empty() {
+        Path::new("index.html").to_path_buf()
+    } else {
+        Path::new(relative).to_path_buf()
+    };
+
+    if relative.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return Err("static path escapes workspace root".to_string());
+    }
+
+    let mut candidate = workspace_root.join(&relative);
+    let Ok(metadata) = tokio::fs::metadata(&candidate).await else {
+        return Ok(None);
+    };
+    if metadata.is_dir() {
+        candidate = candidate.join("index.html");
+    }
+    let Ok(canonical) = candidate.canonicalize() else {
+        return Ok(None);
+    };
+    if !canonical.starts_with(workspace_root) {
+        return Err("static path escapes workspace root".to_string());
+    }
+    if !canonical.is_file() {
+        return Ok(None);
+    }
+
+    Ok(Some(canonical))
+}
+
+fn content_type(path: &Path) -> &'static str {
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some("html" | "htm") => "text/html; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("js") => "text/javascript; charset=utf-8",
+        Some("json") => "application/json; charset=utf-8",
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("wasm") => "application/wasm",
+        Some("txt") => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
+    }
 }

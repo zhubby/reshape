@@ -154,6 +154,67 @@ async fn rpc_websocket_accepts_ping_after_rpc_handshake() {
     task.abort();
 }
 
+#[tokio::test]
+async fn root_serves_workspace_index_html() {
+    let (addr, workspace, task) = spawn_server().await;
+    tokio::fs::write(
+        workspace.path().join("index.html"),
+        "<!doctype html><title>Reshape</title>",
+    )
+    .await
+    .unwrap();
+
+    let response = reqwest::get(format!("http://{addr}/")).await.unwrap();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    let body = response.text().await.unwrap();
+
+    assert!(content_type.starts_with("text/html"));
+    assert!(body.contains("<title>Reshape</title>"));
+    task.abort();
+}
+
+#[tokio::test]
+async fn static_route_serves_workspace_asset() {
+    let (addr, workspace, task) = spawn_server().await;
+    tokio::fs::write(workspace.path().join("style.css"), "body { color: red; }")
+        .await
+        .unwrap();
+
+    let response = reqwest::get(format!("http://{addr}/style.css"))
+        .await
+        .unwrap();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    let body = response.text().await.unwrap();
+
+    assert!(content_type.starts_with("text/css"));
+    assert_eq!(body, "body { color: red; }");
+    task.abort();
+}
+
+#[tokio::test]
+async fn static_route_returns_not_found_for_missing_file() {
+    let (addr, _workspace, task) = spawn_server().await;
+
+    let response = reqwest::get(format!("http://{addr}/missing.js"))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND);
+    task.abort();
+}
+
 async fn spawn_server() -> (SocketAddr, tempfile::TempDir, tokio::task::JoinHandle<()>) {
     let workspace = tempfile::tempdir().unwrap();
     let config =
@@ -163,8 +224,11 @@ async fn spawn_server() -> (SocketAddr, tempfile::TempDir, tokio::task::JoinHand
     let runtime = build_runtime(config, Arc::new(MockLlmProvider::default())).unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
+    let workspace_root = workspace.path().to_path_buf();
     let task = tokio::spawn(async move {
-        serve_rpc_listener(listener, runtime).await.unwrap();
+        serve_rpc_listener(listener, runtime, workspace_root)
+            .await
+            .unwrap();
     });
     (addr, workspace, task)
 }

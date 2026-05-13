@@ -1,4 +1,4 @@
-.PHONY: build check test clippy fmt lint docs-build docs-serve docs-clean run run-mock run-browser run-browser-headed clean all
+.PHONY: build check test clippy fmt lint extension-build extension-package docs-build docs-serve docs-clean run run-mock run-browser run-browser-headed clean all
 
 # ── Cargo ──────────────────────────────────────────────────────────
 
@@ -23,6 +23,15 @@ all: fmt clippy test
 
 clean:
 	cargo clean
+
+# ── Browser Extension ───────────────────────────────────────────────
+
+extension-build:
+	cargo test -p reshape-cli --test ts_bindings
+	cd extensions/reshape && npm run build
+
+extension-package: extension-build
+	cd extensions/reshape && npm run package
 
 # ── Run ─────────────────────────────────────────────────────────────
 
