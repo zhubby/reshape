@@ -39,6 +39,7 @@ time = { version = "0.3", features = ["formatting"] }
 tokio = { version = "1.52.3", features = ["full"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 tracing-subscriber = "0.3.23"
+toml = "1.1.2"
 url = "2"
 urlencoding = "2"
 uuid = { version = "1.23.1", features = ["v4", "serde"] }

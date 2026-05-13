@@ -1,4 +1,6 @@
-use reshape_cli::CliArgs;
+use std::path::Path;
+
+use reshape_cli::{CliArgs, CliCommand};
 use reshape_core::config::AppConfig;
 
 #[test]
@@ -12,15 +14,41 @@ fn parses_workspace_and_optional_overrides() {
         "--model",
         "test-model",
         "--mock-llm",
+        "--log-level",
+        "debug",
     ]);
 
-    assert_eq!(args.workspace.to_string_lossy(), "./page");
-    assert_eq!(
-        args.config.as_deref().unwrap().to_string_lossy(),
-        "./reshape.toml"
-    );
-    assert_eq!(args.model.as_deref(), Some("test-model"));
-    assert!(args.mock_llm);
+    let agent = args.agent_options();
+    assert_eq!(agent.workspace.as_deref(), Some(Path::new("./page")));
+    assert_eq!(agent.config.as_deref(), Some(Path::new("./reshape.toml")));
+    assert_eq!(agent.model.as_deref(), Some("test-model"));
+    assert!(agent.mock_llm);
+    assert_eq!(args.log_level.as_deref(), Some("debug"));
+    assert_eq!(args.command_kind(), CliCommand::Agent);
+}
+
+#[test]
+fn parses_agent_subcommand_as_default_behavior() {
+    let args = CliArgs::parse_from([
+        "reshape",
+        "agent",
+        "--workspace",
+        "./page",
+        "--model",
+        "test-model",
+    ]);
+
+    let agent = args.agent_options();
+    assert_eq!(agent.workspace.as_deref(), Some(Path::new("./page")));
+    assert_eq!(agent.model.as_deref(), Some("test-model"));
+    assert_eq!(args.command_kind(), CliCommand::Agent);
+}
+
+#[test]
+fn parses_version_subcommand() {
+    let args = CliArgs::parse_from(["reshape", "version"]);
+
+    assert_eq!(args.command_kind(), CliCommand::Version);
 }
 
 #[test]

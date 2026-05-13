@@ -22,6 +22,71 @@ fn cli_reports_missing_workspace_during_config_build() {
 }
 
 #[test]
+fn cli_default_workspace_is_created_under_reshape_home() {
+    let home = tempfile::tempdir().unwrap();
+    let args = CliArgs::parse_from(["reshape"]);
+
+    let config = args.into_config_with_home(home.path()).unwrap();
+
+    let workspace = home.path().join(".reshape").join("workspace");
+    assert_eq!(config.workspace.root, workspace);
+    assert!(config.workspace.root.is_dir());
+}
+
+#[test]
+fn cli_default_config_path_is_under_reshape_home() {
+    let home = tempfile::tempdir().unwrap();
+    let args = CliArgs::parse_from(["reshape"]);
+
+    assert_eq!(
+        args.resolved_config_path_with_home(home.path()),
+        home.path().join(".reshape").join("config.toml")
+    );
+}
+
+#[test]
+fn cli_loads_toml_config_and_cli_overrides_it() {
+    let home = tempfile::tempdir().unwrap();
+    let config_workspace = home.path().join("configured-workspace");
+    let cli_workspace = home.path().join("cli-workspace");
+    std::fs::create_dir_all(&config_workspace).unwrap();
+    std::fs::create_dir_all(&cli_workspace).unwrap();
+    let config_path = home.path().join(".reshape").join("config.toml");
+    std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &config_path,
+        format!(
+            r#"
+workspace = "{}"
+model = "configured-model"
+mock_llm = false
+
+[runtime]
+max_tool_iterations = 3
+max_tool_calls = 9
+"#,
+            config_workspace.to_string_lossy()
+        ),
+    )
+    .unwrap();
+
+    let args = CliArgs::parse_from([
+        "reshape",
+        "--workspace",
+        cli_workspace.to_str().unwrap(),
+        "--model",
+        "cli-model",
+    ]);
+    let config = args.into_config_with_home(home.path()).unwrap();
+
+    assert_eq!(config.workspace.root, cli_workspace);
+    assert_eq!(config.llm.model.as_deref(), Some("cli-model"));
+    assert!(!config.llm.use_mock);
+    assert_eq!(config.runtime.max_tool_iterations, 3);
+    assert_eq!(config.runtime.max_tool_calls, 9);
+}
+
+#[test]
 fn cli_config_defaults_to_usable_mock_provider() {
     let dir = tempfile::tempdir().unwrap();
     let args = CliArgs::parse_from(["reshape", "--workspace", dir.path().to_str().unwrap()]);

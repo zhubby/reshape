@@ -33,6 +33,9 @@ pub enum ReshapeError {
     #[error("provider error: {0}")]
     Provider(String),
 
+    #[error("configuration error: {0}")]
+    Config(String),
+
     #[error("serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 

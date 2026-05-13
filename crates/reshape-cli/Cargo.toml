@@ -14,6 +14,9 @@ reshape-core = { path = "../reshape-core" }
 reshape-browser = { path = "../reshape-browser" }
 tokio.workspace = true
 tracing-subscriber.workspace = true
+serde = { workspace = true, features = ["derive"] }
+dirs.workspace = true
+toml.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

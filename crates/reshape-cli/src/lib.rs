@@ -1,11 +1,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use clap::Parser;
+use clap::{Args, Parser, Subcommand};
 use reshape_browser::agent_browser::{BrowserOptions, BrowserSession};
 use reshape_browser::{AgentBrowserRenderer, BrowserRenderer};
 use reshape_core::bus::{EventBus, InProcessBus};
-use reshape_core::config::AppConfig;
+use reshape_core::config::{AppConfig, validate_workspace};
 use reshape_core::error::{ReshapeError, Result};
 use reshape_core::ingress::IngressSource;
 use reshape_core::ingress::cli_stdin::CliStdinIngress;
@@ -19,14 +19,28 @@ use reshape_core::tools::InMemoryToolRegistry;
 use reshape_core::tools::complete::CompleteTaskTool;
 use reshape_core::tools::file::FileTool;
 use reshape_core::workspace::local::LocalWorkspace;
+use serde::Deserialize;
 use tokio::sync::mpsc;
+use tracing_subscriber::filter::LevelFilter;
 
 #[derive(Debug, Clone, Parser, PartialEq, Eq)]
 #[command(name = "reshape")]
 #[command(about = "Local single-session agent runtime for AI-rendered pages")]
 pub struct CliArgs {
+    #[command(flatten)]
+    agent: AgentOptions,
+
     #[arg(long)]
-    pub workspace: PathBuf,
+    pub log_level: Option<String>,
+
+    #[command(subcommand)]
+    command: Option<CommandArgs>,
+}
+
+#[derive(Debug, Clone, Args, Default, PartialEq, Eq)]
+pub struct AgentOptions {
+    #[arg(long)]
+    pub workspace: Option<PathBuf>,
 
     #[arg(long)]
     pub config: Option<PathBuf>,
@@ -47,6 +61,33 @@ pub struct CliArgs {
     pub browser_headed: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CliCommand {
+    Agent,
+    Version,
+}
+
+#[derive(Debug, Clone, Subcommand, PartialEq, Eq)]
+enum CommandArgs {
+    Agent(AgentOptions),
+    Version,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct FileConfig {
+    workspace: Option<PathBuf>,
+    model: Option<String>,
+    mock_llm: Option<bool>,
+    log_level: Option<String>,
+    runtime: Option<FileRuntimeConfig>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct FileRuntimeConfig {
+    max_tool_iterations: Option<usize>,
+    max_tool_calls: Option<usize>,
+}
+
 impl CliArgs {
     pub fn parse_from<I, T>(itr: I) -> Self
     where
@@ -57,38 +98,177 @@ impl CliArgs {
     }
 
     pub fn into_config(self) -> Result<AppConfig> {
-        let mut config = AppConfig::for_workspace(self.workspace)?.with_model(self.model);
-        if self.mock_llm {
+        let home = dirs::home_dir().ok_or_else(|| {
+            ReshapeError::Config("could not determine user home directory".into())
+        })?;
+        self.into_config_with_home(&home)
+    }
+
+    pub fn into_config_with_home(self, home: &Path) -> Result<AppConfig> {
+        let options = self.agent_options();
+        let config_path = self.resolved_config_path_with_home(home);
+        let explicit_config_path = options.config.is_some();
+        let file_config = load_file_config(&config_path, explicit_config_path)?;
+        let workspace = resolve_workspace(home, &options, &file_config)?;
+
+        let mut config = AppConfig::for_workspace(workspace)?;
+        if let Some(runtime) = file_config.runtime {
+            if let Some(max_tool_iterations) = runtime.max_tool_iterations {
+                config.runtime.max_tool_iterations = max_tool_iterations;
+            }
+            if let Some(max_tool_calls) = runtime.max_tool_calls {
+                config.runtime.max_tool_calls = max_tool_calls;
+            }
+        }
+        if let Some(model) = file_config.model {
+            config.llm.model = Some(model);
+        }
+        if let Some(use_mock) = file_config.mock_llm {
+            config.llm.use_mock = use_mock;
+        }
+
+        if let Some(model) = options.model {
+            config = config.with_model(Some(model));
+        }
+        if options.mock_llm {
             config = config.with_mock_llm(true);
         }
         Ok(config)
     }
 
     pub fn browser_renderer(&self) -> Option<Box<dyn BrowserRenderer>> {
-        if !self.render_browser {
+        let options = self.agent_options();
+        if !options.render_browser {
             return None;
         }
 
-        let options = BrowserOptions {
-            session: self.browser_session.clone(),
-            headed: self.browser_headed,
+        let browser_options = BrowserOptions {
+            session: options.browser_session,
+            headed: options.browser_headed,
             allow_file_access: true,
             ..BrowserOptions::default()
         };
         Some(Box::new(AgentBrowserRenderer::new(BrowserSession::new(
-            options,
+            browser_options,
         ))))
+    }
+
+    #[must_use]
+    pub fn agent_options(&self) -> AgentOptions {
+        match &self.command {
+            Some(CommandArgs::Agent(options)) => self.agent.clone().merge(options.clone()),
+            _ => self.agent.clone(),
+        }
+    }
+
+    #[must_use]
+    pub fn command_kind(&self) -> CliCommand {
+        match &self.command {
+            Some(CommandArgs::Version) => CliCommand::Version,
+            _ => CliCommand::Agent,
+        }
+    }
+
+    #[must_use]
+    pub fn resolved_config_path_with_home(&self, home: &Path) -> PathBuf {
+        self.agent_options()
+            .config
+            .unwrap_or_else(|| default_app_dir(home).join("config.toml"))
+    }
+
+    pub fn resolved_log_level_with_home(&self, home: &Path) -> Result<String> {
+        if let Some(level) = &self.log_level {
+            return Ok(level.clone());
+        }
+
+        let options = self.agent_options();
+        let config_path = self.resolved_config_path_with_home(home);
+        let file_config = load_file_config(&config_path, options.config.is_some())?;
+        Ok(file_config.log_level.unwrap_or_else(|| "info".to_string()))
+    }
+}
+
+impl AgentOptions {
+    fn merge(mut self, override_options: Self) -> Self {
+        self.workspace = override_options.workspace.or(self.workspace);
+        self.config = override_options.config.or(self.config);
+        self.model = override_options.model.or(self.model);
+        self.mock_llm |= override_options.mock_llm;
+        self.render_browser |= override_options.render_browser;
+        self.browser_session = if override_options.browser_session != "reshape-main" {
+            override_options.browser_session
+        } else {
+            self.browser_session
+        };
+        self.browser_headed |= override_options.browser_headed;
+        self
     }
 }
 
 pub async fn run() -> Result<()> {
-    tracing_subscriber::fmt::try_init().ok();
     let args = CliArgs::parse();
+    if matches!(args.command_kind(), CliCommand::Version) {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
+    let home = dirs::home_dir()
+        .ok_or_else(|| ReshapeError::Config("could not determine user home directory".into()))?;
+    init_logging(&args.resolved_log_level_with_home(&home)?)?;
     let browser = args.browser_renderer();
-    let config = args.into_config()?;
+    let config = args.into_config_with_home(&home)?;
     let workspace_root = config.workspace.root.clone();
     let runtime = build_runtime(config, Arc::new(MockLlmProvider::default()))?;
     run_stdin_loop(runtime, workspace_root, browser).await
+}
+
+pub fn init_logging(log_level: &str) -> Result<()> {
+    let level = log_level
+        .parse::<LevelFilter>()
+        .map_err(|_| ReshapeError::Config(format!("invalid log level: {log_level}")))?;
+    tracing_subscriber::fmt()
+        .with_max_level(level)
+        .try_init()
+        .ok();
+    Ok(())
+}
+
+fn load_file_config(path: &Path, explicit_path: bool) -> Result<FileConfig> {
+    if !path.exists() {
+        if explicit_path {
+            return Err(ReshapeError::Config(format!(
+                "config file does not exist: {}",
+                path.display()
+            )));
+        }
+        return Ok(FileConfig::default());
+    }
+
+    let content = std::fs::read_to_string(path)?;
+    toml::from_str(&content)
+        .map_err(|error| ReshapeError::Config(format!("failed to parse config TOML: {error}")))
+}
+
+fn resolve_workspace(
+    home: &Path,
+    options: &AgentOptions,
+    file_config: &FileConfig,
+) -> Result<PathBuf> {
+    if let Some(workspace) = &options.workspace {
+        return validate_workspace(workspace);
+    }
+
+    if let Some(workspace) = &file_config.workspace {
+        return validate_workspace(workspace);
+    }
+
+    let workspace = default_app_dir(home).join("workspace");
+    std::fs::create_dir_all(&workspace)?;
+    validate_workspace(&workspace)
+}
+
+fn default_app_dir(home: &Path) -> PathBuf {
+    home.join(".reshape")
 }
 
 pub fn build_runtime(config: AppConfig, provider: Arc<dyn LlmProvider>) -> Result<AgentRuntime> {
