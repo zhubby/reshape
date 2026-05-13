@@ -212,6 +212,8 @@ Name tests by behavior, e.g., `natural_language_returns_final_message`, `unknown
 | `workspace_tools.rs` | Workspace read/write/list, path escape rejection, symlink escape rejection, file watcher |
 | `scaffold_core.rs` | Core type and trait contract verification |
 
+> **Note:** `agent-browser` module tests are too time-consuming to run unless that module has been modified. For day-to-day development, just run `cargo test --test <other_module>` or exclude this module.
+
 ### Assertion Style
 
 - Prefer enum equality assertions on output events: `assert_eq!(output.payload, OutputEvent::Completed { .. })`.
