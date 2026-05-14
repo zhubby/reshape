@@ -66,7 +66,7 @@ fn cli_startup_initializes_reshape_directory_and_default_config() {
     assert!(config.contains("provider = \"openai\""));
     assert!(config.contains("[llm.openai]"));
     assert!(config.contains("model = \"gpt-5.5\""));
-    assert!(config.contains("api_key_env = \"OPENAI_API_KEY\""));
+    assert!(config.contains("api_key = \"\""));
     assert!(config.contains("stream = true"));
     assert!(config.contains("log_level = \"info\""));
     assert!(config.contains("[runtime]"));
@@ -98,7 +98,7 @@ provider = "openai"
 [llm.openai]
 model = "configured-model"
 base_url = "http://127.0.0.1:9999/v1"
-api_key_env = "TEST_OPENAI_API_KEY"
+api_key = "sk-test-configured"
 stream = false
 timeout_secs = 5
 
@@ -132,7 +132,7 @@ port = 7331
     assert_eq!(config.workspace.root, cli_workspace);
     assert_eq!(config.llm.openai.model, "cli-model");
     assert_eq!(config.llm.openai.base_url, "http://127.0.0.1:9999/v1");
-    assert_eq!(config.llm.openai.api_key_env, "TEST_OPENAI_API_KEY");
+    assert_eq!(config.llm.openai.api_key, "sk-test-configured");
     assert!(!config.llm.openai.stream);
     assert_eq!(config.llm.openai.timeout_secs, 5);
     assert_eq!(config.runtime.max_tool_iterations, 3);
@@ -160,7 +160,7 @@ fn cli_config_defaults_to_openai_provider() {
 
     assert_eq!(config.llm.provider.as_str(), "openai");
     assert_eq!(config.llm.openai.model, "gpt-5.5");
-    assert_eq!(config.llm.openai.api_key_env, "OPENAI_API_KEY");
+    assert_eq!(config.llm.openai.api_key, "");
     assert!(config.llm.openai.stream);
 }
 
@@ -216,23 +216,19 @@ async fn cli_runtime_builder_can_create_page_with_injected_provider() {
 }
 
 #[tokio::test]
-async fn cli_runtime_builder_requires_configured_openai_api_key() {
+async fn cli_runtime_builder_requires_configured_openai_api_key_value() {
     let dir = tempfile::tempdir().unwrap();
     let mut config = CliArgs::parse_from(["reshape", "--workspace", dir.path().to_str().unwrap()])
         .into_config()
         .unwrap();
-    config.llm.openai.api_key_env = "RESHAPE_TEST_OPENAI_API_KEY_MISSING".to_string();
+    config.llm.openai.api_key = String::new();
 
     let error = match build_runtime(config) {
         Ok(_) => panic!("runtime should require missing OpenAI API key"),
         Err(error) => error,
     };
 
-    assert!(
-        error
-            .to_string()
-            .contains("RESHAPE_TEST_OPENAI_API_KEY_MISSING")
-    );
+    assert!(error.to_string().contains("must not be empty"));
 }
 
 #[test]

@@ -58,7 +58,7 @@ impl TryFrom<&str> for LlmProviderKind {
 pub struct OpenAiConfig {
     pub model: String,
     pub base_url: String,
-    pub api_key_env: String,
+    pub api_key: String,
     pub stream: bool,
     pub timeout_secs: u64,
     pub organization: Option<String>,
@@ -89,7 +89,7 @@ impl Default for OpenAiConfig {
         Self {
             model: "gpt-5.5".to_string(),
             base_url: "https://api.openai.com/v1".to_string(),
-            api_key_env: "OPENAI_API_KEY".to_string(),
+            api_key: String::new(),
             stream: true,
             timeout_secs: 120,
             organization: None,

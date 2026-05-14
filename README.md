@@ -98,7 +98,7 @@ cargo run -p reshape-cli -- --workspace ./page
 
 Then type a natural-language request into stdin.
 
-The default provider is OpenAI Chat Completions. Set `OPENAI_API_KEY` or change `api_key_env` in `~/.reshape/config.toml` before running an agent turn.
+The default provider is OpenAI Chat Completions. Put the API key directly in `~/.reshape/config.toml` as `llm.openai.api_key` before running an agent turn.
 
 To render the completed `index.html` through the embedded browser adapter:
 

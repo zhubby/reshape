@@ -104,7 +104,7 @@ struct FileLlmConfig {
 struct FileOpenAiConfig {
     model: Option<String>,
     base_url: Option<String>,
-    api_key_env: Option<String>,
+    api_key: Option<String>,
     stream: Option<bool>,
     timeout_secs: Option<u64>,
     organization: Option<String>,
@@ -385,7 +385,7 @@ provider = "openai"
 [llm.openai]
 model = "gpt-5.5"
 base_url = "https://api.openai.com/v1"
-api_key_env = "OPENAI_API_KEY"
+api_key = ""
 stream = true
 timeout_secs = 120
 
@@ -442,8 +442,8 @@ fn apply_llm_file_config(config: &mut AppConfig, file_llm: Option<FileLlmConfig>
     if let Some(base_url) = openai.base_url {
         config.llm.openai.base_url = base_url;
     }
-    if let Some(api_key_env) = openai.api_key_env {
-        config.llm.openai.api_key_env = api_key_env;
+    if let Some(api_key) = openai.api_key {
+        config.llm.openai.api_key = api_key;
     }
     if let Some(stream) = openai.stream {
         config.llm.openai.stream = stream;

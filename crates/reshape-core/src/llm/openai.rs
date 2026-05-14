@@ -25,12 +25,7 @@ pub struct OpenAiChatCompletionProvider {
 
 impl OpenAiChatCompletionProvider {
     pub fn from_config(config: OpenAiConfig) -> Result<Self> {
-        let api_key = std::env::var(&config.api_key_env).map_err(|_| {
-            ReshapeError::Provider(format!(
-                "missing OpenAI API key environment variable: {}",
-                config.api_key_env
-            ))
-        })?;
+        let api_key = config.api_key.clone();
         Self::new(config, api_key)
     }
 

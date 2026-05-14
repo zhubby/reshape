@@ -31,7 +31,7 @@ mkdir -p page
 cargo run -p reshape-cli -- --workspace ./page
 ```
 
-Type a natural-language request into stdin. The default provider is OpenAI Chat Completions and requires `OPENAI_API_KEY` unless `api_key_env` is changed in config.
+Type a natural-language request into stdin. The default provider is OpenAI Chat Completions and requires `llm.openai.api_key` in `~/.reshape/config.toml`.
 
 To render through the embedded browser adapter:
 
