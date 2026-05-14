@@ -15,7 +15,7 @@ This repository currently implements the agent foundation plus the first browser
 - A runtime loop that calls an LLM provider and executes tool calls.
 - A trait-based tool system with workspace file tools.
 - A safe local workspace abstraction with path escape protection.
-- A mock LLM provider for local development and tests.
+- An OpenAI Chat Completions provider with streaming aggregation support.
 - A system prompt contract for page-generation behavior.
 - A vendored `agent-browser` 0.27.0 CLI crate with an additive Rust façade.
 - An optional `reshape-browser` adapter that opens `index.html` through the browser façade after a completed turn.
@@ -50,7 +50,7 @@ Core modules:
 - `protocol`: envelope, input events, output events, schema version, and error codes.
 - `session`: the single-session state model, turn state, and `SessionStore` trait.
 - `runtime`: agent turn orchestration and tool-loop execution.
-- `llm`: provider trait, chat messages, tool-call types, and mock provider.
+- `llm`: provider trait, chat messages, tool-call types, and OpenAI provider.
 - `tools`: `Tool`, `ToolRegistry`, `ToolContext`, `ToolResult`, and built-in tools.
 - `workspace`: safe local file access and workspace watcher traits.
 - `ingress`: input-source abstraction for CLI stdin and future adapters.
@@ -98,7 +98,7 @@ cargo run -p reshape-cli -- --workspace ./page
 
 Then type a natural-language request into stdin.
 
-The current default provider is a mock provider intended for local development. It can exercise the file-tool loop and create `index.html` in the configured workspace.
+The default provider is OpenAI Chat Completions. Set `OPENAI_API_KEY` or change `api_key_env` in `~/.reshape/config.toml` before running an agent turn.
 
 To render the completed `index.html` through the embedded browser adapter:
 
@@ -147,7 +147,6 @@ Additional design notes live in `docs/`:
 
 The next practical milestones are:
 
-- Add a real OpenAI-compatible or Anthropic-compatible `LlmProvider`.
 - Add a WebSocket ingress adapter for the browser extension.
 - Add a CDP adapter that turns user browser actions into `InputEvent::CdpUserEvent`.
 - Extend the browser render adapter from completion-triggered `index.html` open to watcher-driven refresh and feedback.

@@ -93,7 +93,10 @@ impl AgentRuntime {
                 "runtime received llm response"
             );
 
-            messages.push(ChatMessage::assistant(response.content.clone()));
+            messages.push(ChatMessage::assistant_with_tool_calls(
+                response.content.clone(),
+                response.tool_calls.clone(),
+            ));
 
             if response.tool_calls.is_empty() {
                 let output = OutputEvent::FinalMessage {
@@ -146,7 +149,10 @@ impl AgentRuntime {
                     content_len = result.content_for_model.len(),
                     "runtime received tool result"
                 );
-                messages.push(ChatMessage::tool(result.content_for_model.clone()));
+                messages.push(ChatMessage::tool_for_call(
+                    call.id.clone(),
+                    result.content_for_model.clone(),
+                ));
 
                 if !result.should_continue {
                     let output = OutputEvent::Completed {

@@ -2,12 +2,15 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 
+use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use reshape_cli::rpc_server::serve_rpc_listener;
-use reshape_cli::{CliArgs, build_runtime};
-use reshape_core::llm::mock::MockLlmProvider;
+use reshape_cli::{CliArgs, build_runtime_with_provider};
+use reshape_core::error::Result;
+use reshape_core::llm::{ChatMessage, ChatOptions, LlmProvider, LlmResponse, ToolCall};
 use serde_json::Value;
 use tokio::net::TcpListener;
+use tokio::sync::Mutex;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use tracing_subscriber::fmt::MakeWriter;
@@ -87,10 +90,7 @@ async fn websocket_input_runs_agent_turn_after_rpc_handshake() {
     assert_eq!(response["jsonrpc"], "2.0");
     assert_eq!(response["id"], "turn-1");
     assert_eq!(response["result"]["output"]["type"], "completed");
-    assert_eq!(
-        response["result"]["output"]["summary"],
-        "Mock page generated in index.html"
-    );
+    assert_eq!(response["result"]["output"]["summary"], "RPC page created");
     assert!(workspace.path().join("index.html").exists());
     task.abort();
 }
@@ -164,7 +164,8 @@ async fn root_serves_workspace_index_html() {
     .await
     .unwrap();
 
-    let response = reqwest::get(format!("http://{addr}/")).await.unwrap();
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let response = client.get(format!("http://{addr}/")).send().await.unwrap();
     let content_type = response
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
@@ -186,7 +187,10 @@ async fn static_route_serves_workspace_asset() {
         .await
         .unwrap();
 
-    let response = reqwest::get(format!("http://{addr}/style.css"))
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let response = client
+        .get(format!("http://{addr}/style.css"))
+        .send()
         .await
         .unwrap();
     let content_type = response
@@ -207,7 +211,10 @@ async fn static_route_serves_workspace_asset() {
 async fn static_route_returns_not_found_for_missing_file() {
     let (addr, _workspace, task) = spawn_server().await;
 
-    let response = reqwest::get(format!("http://{addr}/missing.js"))
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let response = client
+        .get(format!("http://{addr}/missing.js"))
+        .send()
         .await
         .unwrap();
 
@@ -221,7 +228,31 @@ async fn spawn_server() -> (SocketAddr, tempfile::TempDir, tokio::task::JoinHand
         CliArgs::parse_from(["reshape", "--workspace", workspace.path().to_str().unwrap()])
             .into_config()
             .unwrap();
-    let runtime = build_runtime(config, Arc::new(MockLlmProvider::default())).unwrap();
+    let runtime = build_runtime_with_provider(
+        config,
+        Arc::new(ScriptedLlmProvider::new([
+            LlmResponse {
+                content: "Writing".to_string(),
+                tool_calls: vec![ToolCall {
+                    id: "write".to_string(),
+                    name: "write_file".to_string(),
+                    arguments: serde_json::json!({
+                        "path": "index.html",
+                        "content": "<h1>RPC</h1>"
+                    }),
+                }],
+            },
+            LlmResponse {
+                content: "Done".to_string(),
+                tool_calls: vec![ToolCall {
+                    id: "complete".to_string(),
+                    name: "complete_task".to_string(),
+                    arguments: serde_json::json!({"summary": "RPC page created"}),
+                }],
+            },
+        ])),
+    )
+    .unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let workspace_root = workspace.path().to_path_buf();
@@ -302,5 +333,40 @@ impl std::io::Write for CapturedLogWriter {
 
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct ScriptedLlmProvider {
+    responses: Mutex<std::collections::VecDeque<LlmResponse>>,
+}
+
+impl ScriptedLlmProvider {
+    fn new(responses: impl IntoIterator<Item = LlmResponse>) -> Self {
+        Self {
+            responses: Mutex::new(responses.into_iter().collect()),
+        }
+    }
+}
+
+#[async_trait]
+impl LlmProvider for ScriptedLlmProvider {
+    fn name(&self) -> &str {
+        "scripted"
+    }
+
+    fn default_model(&self) -> &str {
+        "scripted-model"
+    }
+
+    async fn chat(
+        &self,
+        _messages: Vec<ChatMessage>,
+        _tools: Vec<reshape_core::tools::types::ToolDefinition>,
+        _options: ChatOptions,
+    ) -> Result<LlmResponse> {
+        self.responses.lock().await.pop_front().ok_or_else(|| {
+            reshape_core::error::ReshapeError::Provider("no scripted response".to_string())
+        })
     }
 }

@@ -13,7 +13,6 @@ fn parses_workspace_and_optional_overrides() {
         "./reshape.toml",
         "--model",
         "test-model",
-        "--mock-llm",
         "--log-level",
         "debug",
         "--host",
@@ -26,7 +25,6 @@ fn parses_workspace_and_optional_overrides() {
     assert_eq!(agent.workspace.as_deref(), Some(Path::new("./page")));
     assert_eq!(agent.config.as_deref(), Some(Path::new("./reshape.toml")));
     assert_eq!(agent.model.as_deref(), Some("test-model"));
-    assert!(agent.mock_llm);
     assert_eq!(agent.host.as_deref(), Some("127.0.0.1"));
     assert_eq!(agent.port, Some(7332));
     assert_eq!(args.log_level.as_deref(), Some("debug"));

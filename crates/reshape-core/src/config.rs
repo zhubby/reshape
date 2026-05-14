@@ -23,8 +23,46 @@ pub struct RuntimeConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LlmConfig {
-    pub model: Option<String>,
-    pub use_mock: bool,
+    pub provider: LlmProviderKind,
+    pub openai: OpenAiConfig,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LlmProviderKind {
+    OpenAi,
+}
+
+impl LlmProviderKind {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OpenAi => "openai",
+        }
+    }
+}
+
+impl TryFrom<&str> for LlmProviderKind {
+    type Error = ReshapeError;
+
+    fn try_from(value: &str) -> Result<Self> {
+        match value {
+            "openai" => Ok(Self::OpenAi),
+            other => Err(ReshapeError::Config(format!(
+                "unsupported llm provider: {other}"
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenAiConfig {
+    pub model: String,
+    pub base_url: String,
+    pub api_key_env: String,
+    pub stream: bool,
+    pub timeout_secs: u64,
+    pub organization: Option<String>,
+    pub project: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -38,10 +76,24 @@ impl Default for AppConfig {
                 max_tool_calls: 32,
             },
             llm: LlmConfig {
-                model: None,
-                use_mock: true,
+                provider: LlmProviderKind::OpenAi,
+                openai: OpenAiConfig::default(),
             },
             session_key: "local:main".to_string(),
+        }
+    }
+}
+
+impl Default for OpenAiConfig {
+    fn default() -> Self {
+        Self {
+            model: "gpt-5.5".to_string(),
+            base_url: "https://api.openai.com/v1".to_string(),
+            api_key_env: "OPENAI_API_KEY".to_string(),
+            stream: true,
+            timeout_secs: 120,
+            organization: None,
+            project: None,
         }
     }
 }
@@ -57,13 +109,8 @@ impl AppConfig {
         })
     }
 
-    pub fn with_model(mut self, model: Option<String>) -> Self {
-        self.llm.model = model;
-        self
-    }
-
-    pub fn with_mock_llm(mut self, use_mock: bool) -> Self {
-        self.llm.use_mock = use_mock;
+    pub fn with_model(mut self, model: String) -> Self {
+        self.llm.openai.model = model;
         self
     }
 }

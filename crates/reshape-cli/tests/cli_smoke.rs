@@ -1,14 +1,16 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use async_trait::async_trait;
 use reshape_browser::{BrowserRenderError, BrowserRenderer};
-use reshape_cli::{CliArgs, build_runtime};
+use reshape_cli::{CliArgs, build_runtime, build_runtime_with_provider};
 use reshape_core::bus::InProcessBus;
+use reshape_core::error::Result as CoreResult;
 use reshape_core::ingress::IngressSource;
 use reshape_core::ingress::cli_stdin::CliStdinIngress;
-use reshape_core::llm::mock::MockLlmProvider;
-use reshape_core::llm::{LlmResponse, ToolCall};
+use reshape_core::llm::{ChatMessage, ChatOptions, LlmProvider, LlmResponse, ToolCall};
 use reshape_core::protocol::{Envelope, InputEvent, InputSource, OutputEvent};
+use tokio::sync::Mutex as TokioMutex;
 
 #[test]
 fn cli_reports_missing_workspace_during_config_build() {
@@ -60,7 +62,12 @@ fn cli_startup_initializes_reshape_directory_and_default_config() {
     assert!(reshape_dir.is_dir());
     assert!(workspace.is_dir());
     assert!(config.contains(&format!("workspace = \"{}\"", workspace.to_string_lossy())));
-    assert!(config.contains("mock_llm = true"));
+    assert!(config.contains("[llm]"));
+    assert!(config.contains("provider = \"openai\""));
+    assert!(config.contains("[llm.openai]"));
+    assert!(config.contains("model = \"gpt-5.5\""));
+    assert!(config.contains("api_key_env = \"OPENAI_API_KEY\""));
+    assert!(config.contains("stream = true"));
     assert!(config.contains("log_level = \"info\""));
     assert!(config.contains("[runtime]"));
     assert!(config.contains("max_tool_iterations = 8"));
@@ -84,8 +91,16 @@ fn cli_loads_toml_config_and_cli_overrides_it() {
         format!(
             r#"
 workspace = "{}"
+
+[llm]
+provider = "openai"
+
+[llm.openai]
 model = "configured-model"
-mock_llm = false
+base_url = "http://127.0.0.1:9999/v1"
+api_key_env = "TEST_OPENAI_API_KEY"
+stream = false
+timeout_secs = 5
 
 [runtime]
 max_tool_iterations = 3
@@ -115,8 +130,11 @@ port = 7331
     let server = args.server_config_with_home(home.path()).unwrap();
 
     assert_eq!(config.workspace.root, cli_workspace);
-    assert_eq!(config.llm.model.as_deref(), Some("cli-model"));
-    assert!(!config.llm.use_mock);
+    assert_eq!(config.llm.openai.model, "cli-model");
+    assert_eq!(config.llm.openai.base_url, "http://127.0.0.1:9999/v1");
+    assert_eq!(config.llm.openai.api_key_env, "TEST_OPENAI_API_KEY");
+    assert!(!config.llm.openai.stream);
+    assert_eq!(config.llm.openai.timeout_secs, 5);
     assert_eq!(config.runtime.max_tool_iterations, 3);
     assert_eq!(config.runtime.max_tool_calls, 9);
     assert_eq!(server.host, "127.0.0.2");
@@ -134,22 +152,25 @@ fn cli_rejects_non_loopback_server_host() {
 }
 
 #[test]
-fn cli_config_defaults_to_usable_mock_provider() {
+fn cli_config_defaults_to_openai_provider() {
     let dir = tempfile::tempdir().unwrap();
     let args = CliArgs::parse_from(["reshape", "--workspace", dir.path().to_str().unwrap()]);
 
     let config = args.into_config().unwrap();
 
-    assert!(config.llm.use_mock);
+    assert_eq!(config.llm.provider.as_str(), "openai");
+    assert_eq!(config.llm.openai.model, "gpt-5.5");
+    assert_eq!(config.llm.openai.api_key_env, "OPENAI_API_KEY");
+    assert!(config.llm.openai.stream);
 }
 
 #[tokio::test]
-async fn cli_runtime_builder_can_create_page_with_mock_provider() {
+async fn cli_runtime_builder_can_create_page_with_injected_provider() {
     let dir = tempfile::tempdir().unwrap();
     let config = CliArgs::parse_from(["reshape", "--workspace", dir.path().to_str().unwrap()])
         .into_config()
         .unwrap();
-    let provider = Arc::new(MockLlmProvider::new([
+    let provider = Arc::new(ScriptedLlmProvider::new([
         LlmResponse {
             content: "Writing".to_string(),
             tool_calls: vec![ToolCall {
@@ -170,7 +191,7 @@ async fn cli_runtime_builder_can_create_page_with_mock_provider() {
             }],
         },
     ]));
-    let runtime = build_runtime(config, provider).unwrap();
+    let runtime = build_runtime_with_provider(config, provider).unwrap();
 
     let output = runtime
         .process(Envelope::new(InputEvent::UserText {
@@ -195,28 +216,23 @@ async fn cli_runtime_builder_can_create_page_with_mock_provider() {
 }
 
 #[tokio::test]
-async fn cli_default_mock_runtime_creates_page_file() {
+async fn cli_runtime_builder_requires_configured_openai_api_key() {
     let dir = tempfile::tempdir().unwrap();
-    let config = CliArgs::parse_from(["reshape", "--workspace", dir.path().to_str().unwrap()])
+    let mut config = CliArgs::parse_from(["reshape", "--workspace", dir.path().to_str().unwrap()])
         .into_config()
         .unwrap();
-    let runtime = build_runtime(config, Arc::new(MockLlmProvider::default())).unwrap();
+    config.llm.openai.api_key_env = "RESHAPE_TEST_OPENAI_API_KEY_MISSING".to_string();
 
-    let output = runtime
-        .process(Envelope::new(InputEvent::UserText {
-            text: "create a page".to_string(),
-            source: InputSource::Cli,
-        }))
-        .await
-        .unwrap();
+    let error = match build_runtime(config) {
+        Ok(_) => panic!("runtime should require missing OpenAI API key"),
+        Err(error) => error,
+    };
 
-    assert_eq!(
-        output.payload,
-        OutputEvent::Completed {
-            summary: "Mock page generated in index.html".to_string()
-        }
+    assert!(
+        error
+            .to_string()
+            .contains("RESHAPE_TEST_OPENAI_API_KEY_MISSING")
     );
-    assert!(dir.path().join("index.html").exists());
 }
 
 #[test]
@@ -264,7 +280,7 @@ struct FakeBrowserRenderer {
 }
 
 impl BrowserRenderer for FakeBrowserRenderer {
-    fn open_workspace_entry(&self, path: &Path) -> Result<(), BrowserRenderError> {
+    fn open_workspace_entry(&self, path: &Path) -> std::result::Result<(), BrowserRenderError> {
         self.opened
             .lock()
             .unwrap()
@@ -272,19 +288,19 @@ impl BrowserRenderer for FakeBrowserRenderer {
         Ok(())
     }
 
-    fn reload(&self) -> Result<(), BrowserRenderError> {
+    fn reload(&self) -> std::result::Result<(), BrowserRenderError> {
         Ok(())
     }
 
-    fn snapshot(&self) -> Result<(), BrowserRenderError> {
+    fn snapshot(&self) -> std::result::Result<(), BrowserRenderError> {
         Ok(())
     }
 
-    fn screenshot(&self, _path: Option<&Path>) -> Result<(), BrowserRenderError> {
+    fn screenshot(&self, _path: Option<&Path>) -> std::result::Result<(), BrowserRenderError> {
         Ok(())
     }
 
-    fn close(&self) -> Result<(), BrowserRenderError> {
+    fn close(&self) -> std::result::Result<(), BrowserRenderError> {
         Ok(())
     }
 }
@@ -311,7 +327,31 @@ async fn cli_ingress_bus_runtime_chain_creates_workspace_file() {
     let config = CliArgs::parse_from(["reshape", "--workspace", dir.path().to_str().unwrap()])
         .into_config()
         .unwrap();
-    let runtime = build_runtime(config, Arc::new(MockLlmProvider::default())).unwrap();
+    let runtime = build_runtime_with_provider(
+        config,
+        Arc::new(ScriptedLlmProvider::new([
+            LlmResponse {
+                content: "Writing".to_string(),
+                tool_calls: vec![ToolCall {
+                    id: "write".to_string(),
+                    name: "write_file".to_string(),
+                    arguments: serde_json::json!({
+                        "path": "index.html",
+                        "content": "<h1>CLI</h1>"
+                    }),
+                }],
+            },
+            LlmResponse {
+                content: "Done".to_string(),
+                tool_calls: vec![ToolCall {
+                    id: "complete".to_string(),
+                    name: "complete_task".to_string(),
+                    arguments: serde_json::json!({"summary": "CLI page created"}),
+                }],
+            },
+        ])),
+    )
+    .unwrap();
     let (bus, mut inbound_rx, mut outbound_rx) = InProcessBus::new(8);
     let input = tokio::io::BufReader::new(&b"create a page\n"[..]);
     let mut ingress = CliStdinIngress::new(input);
@@ -330,8 +370,43 @@ async fn cli_ingress_bus_runtime_chain_creates_workspace_file() {
     assert_eq!(
         output,
         OutputEvent::Completed {
-            summary: "Mock page generated in index.html".to_string()
+            summary: "CLI page created".to_string()
         }
     );
     assert!(dir.path().join("index.html").exists());
+}
+
+#[derive(Debug)]
+struct ScriptedLlmProvider {
+    responses: TokioMutex<std::collections::VecDeque<LlmResponse>>,
+}
+
+impl ScriptedLlmProvider {
+    fn new(responses: impl IntoIterator<Item = LlmResponse>) -> Self {
+        Self {
+            responses: TokioMutex::new(responses.into_iter().collect()),
+        }
+    }
+}
+
+#[async_trait]
+impl LlmProvider for ScriptedLlmProvider {
+    fn name(&self) -> &str {
+        "scripted"
+    }
+
+    fn default_model(&self) -> &str {
+        "scripted-model"
+    }
+
+    async fn chat(
+        &self,
+        _messages: Vec<ChatMessage>,
+        _tools: Vec<reshape_core::tools::types::ToolDefinition>,
+        _options: ChatOptions,
+    ) -> CoreResult<LlmResponse> {
+        self.responses.lock().await.pop_front().ok_or_else(|| {
+            reshape_core::error::ReshapeError::Provider("no scripted response".to_string())
+        })
+    }
 }

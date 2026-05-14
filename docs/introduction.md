@@ -31,7 +31,7 @@ mkdir -p page
 cargo run -p reshape-cli -- --workspace ./page
 ```
 
-Type a natural-language request into stdin. The default provider is a mock provider for local development.
+Type a natural-language request into stdin. The default provider is OpenAI Chat Completions and requires `OPENAI_API_KEY` unless `api_key_env` is changed in config.
 
 To render through the embedded browser adapter:
 

@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use reshape_core::llm::mock::MockLlmProvider;
-use reshape_core::llm::{LlmResponse, ToolCall};
+use async_trait::async_trait;
+use reshape_core::error::Result;
+use reshape_core::llm::{ChatMessage, ChatOptions, LlmProvider, LlmResponse, ToolCall};
 use reshape_core::observability::NoopTelemetry;
 use reshape_core::protocol::{Envelope, InputEvent, InputSource, OutputEvent};
 use reshape_core::runtime::{AgentRuntime, RuntimeDeps, RuntimeLimits};
@@ -10,8 +11,9 @@ use reshape_core::tools::InMemoryToolRegistry;
 use reshape_core::tools::complete::CompleteTaskTool;
 use reshape_core::tools::file::FileTool;
 use reshape_core::workspace::local::LocalWorkspace;
+use tokio::sync::Mutex;
 
-fn tool_runtime(provider: MockLlmProvider, workspace: Arc<LocalWorkspace>) -> AgentRuntime {
+fn tool_runtime(provider: ScriptedLlmProvider, workspace: Arc<LocalWorkspace>) -> AgentRuntime {
     let tools = InMemoryToolRegistry::new()
         .register(FileTool::write_file())
         .register(CompleteTaskTool);
@@ -35,7 +37,7 @@ fn tool_runtime(provider: MockLlmProvider, workspace: Arc<LocalWorkspace>) -> Ag
 async fn tool_loop_writes_file_then_completes() {
     let dir = tempfile::tempdir().unwrap();
     let workspace = Arc::new(LocalWorkspace::new(dir.path()).unwrap());
-    let provider = MockLlmProvider::new([
+    let provider = ScriptedLlmProvider::new([
         LlmResponse {
             content: "Writing page".to_string(),
             tool_calls: vec![ToolCall {
@@ -86,7 +88,7 @@ async fn tool_loop_writes_file_then_completes() {
 async fn tool_loop_stops_when_iteration_budget_is_exceeded() {
     let dir = tempfile::tempdir().unwrap();
     let workspace = Arc::new(LocalWorkspace::new(dir.path()).unwrap());
-    let provider = MockLlmProvider::new(std::iter::repeat_n(
+    let provider = ScriptedLlmProvider::new(std::iter::repeat_n(
         LlmResponse {
             content: "Still writing".to_string(),
             tool_calls: vec![ToolCall {
@@ -123,4 +125,39 @@ async fn tool_loop_stops_when_iteration_budget_is_exceeded() {
         .unwrap_err();
 
     assert!(error.to_string().contains("max tool iterations"));
+}
+
+#[derive(Debug)]
+struct ScriptedLlmProvider {
+    responses: Mutex<std::collections::VecDeque<LlmResponse>>,
+}
+
+impl ScriptedLlmProvider {
+    fn new(responses: impl IntoIterator<Item = LlmResponse>) -> Self {
+        Self {
+            responses: Mutex::new(responses.into_iter().collect()),
+        }
+    }
+}
+
+#[async_trait]
+impl LlmProvider for ScriptedLlmProvider {
+    fn name(&self) -> &str {
+        "scripted"
+    }
+
+    fn default_model(&self) -> &str {
+        "scripted-model"
+    }
+
+    async fn chat(
+        &self,
+        _messages: Vec<ChatMessage>,
+        _tools: Vec<reshape_core::tools::types::ToolDefinition>,
+        _options: ChatOptions,
+    ) -> Result<LlmResponse> {
+        self.responses.lock().await.pop_front().ok_or_else(|| {
+            reshape_core::error::ReshapeError::Provider("no scripted response".to_string())
+        })
+    }
 }

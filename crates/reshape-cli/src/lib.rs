@@ -9,8 +9,7 @@ use reshape_core::bus::EventBus;
 use reshape_core::config::{AppConfig, validate_workspace};
 use reshape_core::error::{ReshapeError, Result};
 use reshape_core::ingress::IngressSource;
-use reshape_core::llm::LlmProvider;
-use reshape_core::llm::mock::MockLlmProvider;
+use reshape_core::llm::{LlmProvider, OpenAiChatCompletionProvider};
 use reshape_core::observability::NoopTelemetry;
 use reshape_core::protocol::{Envelope, InputEvent, OutputEvent};
 use reshape_core::runtime::{AgentRuntime, RuntimeDeps, RuntimeLimits};
@@ -53,9 +52,6 @@ pub struct AgentOptions {
     pub model: Option<String>,
 
     #[arg(long)]
-    pub mock_llm: bool,
-
-    #[arg(long)]
     pub render_browser: bool,
 
     #[arg(long, default_value = "reshape-main")]
@@ -92,11 +88,27 @@ enum CommandArgs {
 #[derive(Debug, Clone, Default, Deserialize)]
 struct FileConfig {
     workspace: Option<PathBuf>,
-    model: Option<String>,
-    mock_llm: Option<bool>,
     log_level: Option<String>,
+    llm: Option<FileLlmConfig>,
     runtime: Option<FileRuntimeConfig>,
     server: Option<FileServerConfig>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct FileLlmConfig {
+    provider: Option<String>,
+    openai: Option<FileOpenAiConfig>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct FileOpenAiConfig {
+    model: Option<String>,
+    base_url: Option<String>,
+    api_key_env: Option<String>,
+    stream: Option<bool>,
+    timeout_secs: Option<u64>,
+    organization: Option<String>,
+    project: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -149,23 +161,15 @@ impl CliArgs {
                 config.runtime.max_tool_calls = max_tool_calls;
             }
         }
-        if let Some(model) = file_config.model {
-            config.llm.model = Some(model);
-        }
-        if let Some(use_mock) = file_config.mock_llm {
-            config.llm.use_mock = use_mock;
-        }
+        apply_llm_file_config(&mut config, file_config.llm)?;
 
         if let Some(model) = options.model {
-            config = config.with_model(Some(model));
-        }
-        if options.mock_llm {
-            config = config.with_mock_llm(true);
+            config = config.with_model(model);
         }
         tracing::debug!(
             workspace = %config.workspace.root.display(),
-            use_mock = config.llm.use_mock,
-            model = config.llm.model.as_deref().unwrap_or(""),
+            provider = config.llm.provider.as_str(),
+            model = config.llm.openai.model,
             max_tool_iterations = config.runtime.max_tool_iterations,
             max_tool_calls = config.runtime.max_tool_calls,
             "app config built"
@@ -275,7 +279,6 @@ impl AgentOptions {
         self.workspace = override_options.workspace.or(self.workspace);
         self.config = override_options.config.or(self.config);
         self.model = override_options.model.or(self.model);
-        self.mock_llm |= override_options.mock_llm;
         self.render_browser |= override_options.render_browser;
         self.browser_session = if override_options.browser_session != "reshape-main" {
             override_options.browser_session
@@ -307,7 +310,7 @@ pub async fn run() -> Result<()> {
     let server_config = args.server_config_with_home(&home)?;
     let config = args.clone().into_config_with_home(&home)?;
     let workspace_root = config.workspace.root.clone();
-    let runtime = build_runtime(config, Arc::new(MockLlmProvider::default()))?;
+    let runtime = build_runtime(config)?;
     let listener = TcpListener::bind(server_config.bind_addr()?).await?;
     rpc_server::serve_rpc_listener(listener, runtime, workspace_root).await
 }
@@ -374,8 +377,17 @@ fn default_app_dir(home: &Path) -> PathBuf {
 fn default_config_toml(workspace: &Path) -> String {
     format!(
         r#"workspace = "{}"
-mock_llm = true
 log_level = "info"
+
+[llm]
+provider = "openai"
+
+[llm.openai]
+model = "gpt-5.5"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+stream = true
+timeout_secs = 120
 
 [runtime]
 max_tool_iterations = 8
@@ -412,7 +424,55 @@ impl ServerConfig {
     }
 }
 
-pub fn build_runtime(config: AppConfig, provider: Arc<dyn LlmProvider>) -> Result<AgentRuntime> {
+fn apply_llm_file_config(config: &mut AppConfig, file_llm: Option<FileLlmConfig>) -> Result<()> {
+    let Some(file_llm) = file_llm else {
+        return Ok(());
+    };
+
+    if let Some(provider) = file_llm.provider {
+        config.llm.provider = provider.as_str().try_into()?;
+    }
+
+    let Some(openai) = file_llm.openai else {
+        return Ok(());
+    };
+    if let Some(model) = openai.model {
+        config.llm.openai.model = model;
+    }
+    if let Some(base_url) = openai.base_url {
+        config.llm.openai.base_url = base_url;
+    }
+    if let Some(api_key_env) = openai.api_key_env {
+        config.llm.openai.api_key_env = api_key_env;
+    }
+    if let Some(stream) = openai.stream {
+        config.llm.openai.stream = stream;
+    }
+    if let Some(timeout_secs) = openai.timeout_secs {
+        config.llm.openai.timeout_secs = timeout_secs;
+    }
+    if let Some(organization) = openai.organization {
+        config.llm.openai.organization = Some(organization);
+    }
+    if let Some(project) = openai.project {
+        config.llm.openai.project = Some(project);
+    }
+    Ok(())
+}
+
+pub fn build_runtime(config: AppConfig) -> Result<AgentRuntime> {
+    let provider: Arc<dyn LlmProvider> = match config.llm.provider {
+        reshape_core::config::LlmProviderKind::OpenAi => Arc::new(
+            OpenAiChatCompletionProvider::from_config(config.llm.openai.clone())?,
+        ),
+    };
+    build_runtime_with_provider(config, provider)
+}
+
+pub fn build_runtime_with_provider(
+    config: AppConfig,
+    provider: Arc<dyn LlmProvider>,
+) -> Result<AgentRuntime> {
     tracing::debug!(
         workspace = %config.workspace.root.display(),
         provider = %provider.name(),
