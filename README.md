@@ -79,12 +79,13 @@ The workspace is the shared data surface between the agent and the browser.
 The built-in file tools support:
 
 - `list_files`
-- `read_file`
-- `write_file`
+- `read_file` with optional `offset` / `limit` pagination
+- `write_file` with HTML normalization and validation metadata
 - `delete_file`
 - `complete_task`
 
 The local workspace implementation restricts file access to the configured workspace root and rejects path traversal and symlink escape attempts. File paths exposed to tools are relative workspace paths so the model can safely reuse paths returned by one tool in another tool call.
+File tool results are returned to the model as structured JSON with success status, paths, counts, truncation metadata, and recovery hints where applicable.
 
 ## Running Locally
 

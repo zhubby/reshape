@@ -158,10 +158,9 @@ async fn tool_loop_reports_ordered_progress_events() {
             .unwrap()
             .contains("<14 chars>")
     );
-    assert_eq!(
-        progress[3].result_preview.as_deref(),
-        Some("wrote index.html")
-    );
+    let write_preview = progress[3].result_preview.as_deref().unwrap();
+    assert!(write_preview.contains("\"tool\": \"write_file\""));
+    assert!(write_preview.contains("\"path\": \"index.html\""));
     assert_eq!(
         progress[7].result_preview.as_deref(),
         Some("Created index.html")

@@ -51,7 +51,7 @@ pub fn normalize_html_write(path: &str, content: &str) -> Result<Option<String>,
     Ok(Some(rewritten))
 }
 
-fn is_html_path(path: &str) -> bool {
+pub(crate) fn is_html_path(path: &str) -> bool {
     matches!(
         Path::new(path).extension().and_then(|value| value.to_str()),
         Some("html" | "htm")
@@ -69,7 +69,7 @@ fn complete_document(content: &str, stylesheet_href: &str) -> String {
     )
 }
 
-fn default_stylesheet_href(path: &str) -> String {
+pub(crate) fn default_stylesheet_href(path: &str) -> String {
     let parent_count = Path::new(path)
         .parent()
         .map(|parent| {

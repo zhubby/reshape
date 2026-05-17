@@ -55,6 +55,18 @@ impl ToolResult {
             should_continue: true,
         }
     }
+
+    pub fn json(content: Value, content_for_user: Option<String>) -> Result<Self> {
+        Ok(Self {
+            success: content
+                .get("success")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+            content_for_model: serde_json::to_string_pretty(&content)?,
+            content_for_user,
+            should_continue: true,
+        })
+    }
 }
 
 #[async_trait]
