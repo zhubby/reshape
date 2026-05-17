@@ -16,6 +16,8 @@ use reshape_core::session::store::{FileSessionStore, InMemorySessionStore, Sessi
 use reshape_core::tools::InMemoryToolRegistry;
 use reshape_core::tools::complete::CompleteTaskTool;
 use reshape_core::tools::file::FileTool;
+use reshape_core::tools::web_fetch::WebFetchTool;
+use reshape_core::tools::web_search::WebSearchTool;
 use reshape_core::workspace::local::LocalWorkspace;
 use serde::Deserialize;
 use tokio::net::TcpListener;
@@ -90,6 +92,7 @@ struct FileConfig {
     llm: Option<FileLlmConfig>,
     runtime: Option<FileRuntimeConfig>,
     server: Option<FileServerConfig>,
+    tools: Option<FileToolsConfig>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -119,6 +122,44 @@ struct FileRuntimeConfig {
 struct FileServerConfig {
     host: Option<String>,
     port: Option<u16>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct FileToolsConfig {
+    web_search: Option<FileWebSearchConfig>,
+    web_fetch: Option<FileWebFetchConfig>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct FileWebSearchConfig {
+    enabled: Option<bool>,
+    provider: Option<String>,
+    tavily: Option<FileTavilyConfig>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct FileTavilyConfig {
+    api_key: Option<String>,
+    env_key: Option<String>,
+    base_url: Option<String>,
+    search_depth: Option<String>,
+    max_results: Option<usize>,
+    topic: Option<String>,
+    include_answer: Option<bool>,
+    include_images: Option<bool>,
+    include_favicon: Option<bool>,
+    timeout_secs: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct FileWebFetchConfig {
+    enabled: Option<bool>,
+    max_bytes: Option<usize>,
+    timeout_secs: Option<u64>,
+    max_redirects: Option<usize>,
+    download_dir: Option<String>,
+    allowed_content_types: Option<Vec<String>>,
+    ssrf_allowlist: Option<Vec<String>>,
 }
 
 impl CliArgs {
@@ -160,6 +201,7 @@ impl CliArgs {
             }
         }
         apply_llm_file_config(&mut config, file_config.llm)?;
+        apply_tools_file_config(&mut config, file_config.tools);
 
         if let Some(model) = options.model {
             config = config.with_model(model);
@@ -471,6 +513,41 @@ max_tool_calls = 32
 [server]
 host = "127.0.0.1"
 port = 7331
+
+[tools.web_search]
+enabled = false
+provider = "tavily"
+
+[tools.web_search.tavily]
+api_key = ""
+env_key = "TAVILY_API_KEY"
+base_url = "https://api.tavily.com"
+search_depth = "basic"
+max_results = 5
+topic = "general"
+include_answer = false
+include_images = false
+include_favicon = true
+timeout_secs = 15
+
+[tools.web_fetch]
+enabled = false
+max_bytes = 52428800
+timeout_secs = 60
+max_redirects = 5
+download_dir = "assets/downloads"
+allowed_content_types = [
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "video/mp4",
+  "video/webm",
+  "audio/mpeg",
+  "audio/wav",
+  "application/pdf",
+]
+ssrf_allowlist = []
 "#,
         workspace.to_string_lossy()
     )
@@ -545,6 +622,77 @@ fn apply_llm_file_config(config: &mut AppConfig, file_llm: Option<FileLlmConfig>
     Ok(())
 }
 
+fn apply_tools_file_config(config: &mut AppConfig, file_tools: Option<FileToolsConfig>) {
+    let Some(file_tools) = file_tools else {
+        return;
+    };
+
+    if let Some(web_search) = file_tools.web_search {
+        if let Some(enabled) = web_search.enabled {
+            config.tools.web_search.enabled = enabled;
+        }
+        if let Some(provider) = web_search.provider {
+            config.tools.web_search.provider = provider;
+        }
+        if let Some(tavily) = web_search.tavily {
+            if let Some(api_key) = tavily.api_key {
+                config.tools.web_search.tavily.api_key = api_key;
+            }
+            if let Some(env_key) = tavily.env_key {
+                config.tools.web_search.tavily.env_key = env_key;
+            }
+            if let Some(base_url) = tavily.base_url {
+                config.tools.web_search.tavily.base_url = base_url;
+            }
+            if let Some(search_depth) = tavily.search_depth {
+                config.tools.web_search.tavily.search_depth = search_depth;
+            }
+            if let Some(max_results) = tavily.max_results {
+                config.tools.web_search.tavily.max_results = max_results;
+            }
+            if let Some(topic) = tavily.topic {
+                config.tools.web_search.tavily.topic = topic;
+            }
+            if let Some(include_answer) = tavily.include_answer {
+                config.tools.web_search.tavily.include_answer = include_answer;
+            }
+            if let Some(include_images) = tavily.include_images {
+                config.tools.web_search.tavily.include_images = include_images;
+            }
+            if let Some(include_favicon) = tavily.include_favicon {
+                config.tools.web_search.tavily.include_favicon = include_favicon;
+            }
+            if let Some(timeout_secs) = tavily.timeout_secs {
+                config.tools.web_search.tavily.timeout_secs = timeout_secs;
+            }
+        }
+    }
+
+    if let Some(web_fetch) = file_tools.web_fetch {
+        if let Some(enabled) = web_fetch.enabled {
+            config.tools.web_fetch.enabled = enabled;
+        }
+        if let Some(max_bytes) = web_fetch.max_bytes {
+            config.tools.web_fetch.max_bytes = max_bytes;
+        }
+        if let Some(timeout_secs) = web_fetch.timeout_secs {
+            config.tools.web_fetch.timeout_secs = timeout_secs;
+        }
+        if let Some(max_redirects) = web_fetch.max_redirects {
+            config.tools.web_fetch.max_redirects = max_redirects;
+        }
+        if let Some(download_dir) = web_fetch.download_dir {
+            config.tools.web_fetch.download_dir = download_dir;
+        }
+        if let Some(allowed_content_types) = web_fetch.allowed_content_types {
+            config.tools.web_fetch.allowed_content_types = allowed_content_types;
+        }
+        if let Some(ssrf_allowlist) = web_fetch.ssrf_allowlist {
+            config.tools.web_fetch.ssrf_allowlist = ssrf_allowlist;
+        }
+    }
+}
+
 pub fn build_runtime(config: AppConfig) -> Result<AgentRuntime> {
     build_runtime_with_session_store(config, Arc::new(InMemorySessionStore::default()))
 }
@@ -585,12 +733,18 @@ pub fn build_runtime_with_provider_and_session_store(
         "building agent runtime"
     );
     let workspace = Arc::new(LocalWorkspace::new(config.workspace.root)?);
-    let tools = InMemoryToolRegistry::new()
+    let mut tools = InMemoryToolRegistry::new()
         .register(FileTool::list_files())
         .register(FileTool::read_file())
         .register(FileTool::write_file())
         .register(FileTool::delete_file())
         .register(CompleteTaskTool);
+    if config.tools.web_search.enabled {
+        tools = tools.register(WebSearchTool::new(config.tools.web_search.clone())?);
+    }
+    if config.tools.web_fetch.enabled {
+        tools = tools.register(WebFetchTool::new(config.tools.web_fetch.clone())?);
+    }
 
     Ok(AgentRuntime::new(
         RuntimeDeps {

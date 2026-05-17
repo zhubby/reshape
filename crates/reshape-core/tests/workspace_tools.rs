@@ -25,6 +25,38 @@ async fn writes_and_reads_workspace_text_file() {
 }
 
 #[tokio::test]
+async fn writes_workspace_binary_file_through_workspace_boundary() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = LocalWorkspace::new(dir.path()).unwrap();
+
+    let path = workspace
+        .write_bytes("assets/downloads/image.png", &[0x89, b'P', b'N', b'G'])
+        .await
+        .unwrap();
+
+    assert_eq!(path, PathBuf::from("assets/downloads/image.png"));
+    assert_eq!(
+        tokio::fs::read(dir.path().join("assets/downloads/image.png"))
+            .await
+            .unwrap(),
+        vec![0x89, b'P', b'N', b'G']
+    );
+}
+
+#[tokio::test]
+async fn binary_write_rejects_path_escape_attempts() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = LocalWorkspace::new(dir.path()).unwrap();
+
+    let error = workspace
+        .write_bytes("../outside.png", &[1, 2, 3])
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("escapes configured root"));
+}
+
+#[tokio::test]
 async fn rejects_path_escape_attempts() {
     let dir = tempfile::tempdir().unwrap();
     let workspace = LocalWorkspace::new(dir.path()).unwrap();

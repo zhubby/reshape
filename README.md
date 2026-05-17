@@ -87,6 +87,11 @@ The built-in file tools support:
 The local workspace implementation restricts file access to the configured workspace root and rejects path traversal and symlink escape attempts. File paths exposed to tools are relative workspace paths so the model can safely reuse paths returned by one tool in another tool call.
 File tool results are returned to the model as structured JSON with success status, paths, counts, truncation metadata, and recovery hints where applicable.
 
+Optional network tools can be enabled in `~/.reshape/config.toml`:
+
+- `web_search` uses Tavily to search the public web and returns structured result metadata.
+- `web_fetch` downloads media and binary resources such as images, videos, audio, and PDFs into the workspace through the same path-safety boundary as file tools.
+
 ## Running Locally
 
 Create a workspace directory and start the CLI:
@@ -112,6 +117,27 @@ When the production browser extension build exists at
 the managed browser session as an unpacked Chrome extension.
 
 The default provider is OpenAI Chat Completions. Put the API key directly in `~/.reshape/config.toml` as `llm.openai.api_key` before running an agent turn.
+
+Tavily search is disabled by default. To enable it:
+
+```toml
+[tools.web_search]
+enabled = true
+provider = "tavily"
+
+[tools.web_search.tavily]
+api_key = "tvly-..."
+env_key = "TAVILY_API_KEY"
+```
+
+Media downloads are also disabled by default:
+
+```toml
+[tools.web_fetch]
+enabled = true
+download_dir = "assets/downloads"
+max_bytes = 52428800
+```
 
 To render the completed `index.html` through the embedded browser adapter:
 

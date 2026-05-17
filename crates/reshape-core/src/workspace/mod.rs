@@ -12,6 +12,7 @@ pub trait Workspace: Send + Sync {
     async fn list_files(&self) -> Result<Vec<PathBuf>>;
     async fn read_text(&self, path: &str) -> Result<String>;
     async fn write_text(&self, path: &str, content: &str) -> Result<PathBuf>;
+    async fn write_bytes(&self, path: &str, content: &[u8]) -> Result<PathBuf>;
     async fn delete_file(&self, path: &str) -> Result<PathBuf>;
 }
 

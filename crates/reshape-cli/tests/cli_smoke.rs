@@ -72,6 +72,12 @@ fn cli_startup_initializes_reshape_directory_and_default_config() {
     assert!(config.contains("[server]"));
     assert!(config.contains("host = \"127.0.0.1\""));
     assert!(config.contains("port = 7331"));
+    assert!(config.contains("[tools.web_search]"));
+    assert!(config.contains("enabled = false"));
+    assert!(config.contains("[tools.web_search.tavily]"));
+    assert!(config.contains("env_key = \"TAVILY_API_KEY\""));
+    assert!(config.contains("[tools.web_fetch]"));
+    assert!(config.contains("download_dir = \"assets/downloads\""));
 }
 
 #[test]
@@ -106,6 +112,26 @@ max_tool_calls = 9
 [server]
 host = "127.0.0.1"
 port = 7331
+
+[tools.web_search]
+enabled = true
+provider = "tavily"
+
+[tools.web_search.tavily]
+api_key = "tvly-configured"
+base_url = "http://127.0.0.1:18888"
+search_depth = "advanced"
+max_results = 7
+include_answer = true
+include_images = true
+
+[tools.web_fetch]
+enabled = true
+max_bytes = 1024
+timeout_secs = 3
+max_redirects = 2
+download_dir = "assets/media"
+ssrf_allowlist = ["127.0.0.1/32"]
 "#,
             config_workspace.to_string_lossy()
         ),
@@ -134,8 +160,60 @@ port = 7331
     assert_eq!(config.llm.openai.timeout_secs, 5);
     assert_eq!(config.runtime.max_tool_iterations, 3);
     assert_eq!(config.runtime.max_tool_calls, 9);
+    assert!(config.tools.web_search.enabled);
+    assert_eq!(config.tools.web_search.provider, "tavily");
+    assert_eq!(config.tools.web_search.tavily.api_key, "tvly-configured");
+    assert_eq!(
+        config.tools.web_search.tavily.base_url,
+        "http://127.0.0.1:18888"
+    );
+    assert_eq!(config.tools.web_search.tavily.search_depth, "advanced");
+    assert_eq!(config.tools.web_search.tavily.max_results, 7);
+    assert!(config.tools.web_search.tavily.include_answer);
+    assert!(config.tools.web_search.tavily.include_images);
+    assert!(config.tools.web_fetch.enabled);
+    assert_eq!(config.tools.web_fetch.max_bytes, 1024);
+    assert_eq!(config.tools.web_fetch.timeout_secs, 3);
+    assert_eq!(config.tools.web_fetch.max_redirects, 2);
+    assert_eq!(config.tools.web_fetch.download_dir, "assets/media");
+    assert_eq!(config.tools.web_fetch.ssrf_allowlist, vec!["127.0.0.1/32"]);
     assert_eq!(server.host, "127.0.0.2");
     assert_eq!(server.port, 7332);
+}
+
+#[test]
+fn cli_config_defaults_to_disabled_network_tools() {
+    let home = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let args = CliArgs::parse_from(["reshape", "--workspace", dir.path().to_str().unwrap()]);
+
+    let config = args.into_config_with_home(home.path()).unwrap();
+
+    assert!(!config.tools.web_search.enabled);
+    assert_eq!(config.tools.web_search.provider, "tavily");
+    assert_eq!(config.tools.web_search.tavily.env_key, "TAVILY_API_KEY");
+    assert!(!config.tools.web_fetch.enabled);
+    assert_eq!(config.tools.web_fetch.download_dir, "assets/downloads");
+}
+
+#[test]
+fn runtime_builder_rejects_enabled_web_search_without_tavily_token() {
+    let home = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = CliArgs::parse_from(["reshape", "--workspace", dir.path().to_str().unwrap()])
+        .into_config_with_home(home.path())
+        .unwrap();
+    config.llm.openai.api_key = "sk-test".to_string();
+    config.tools.web_search.enabled = true;
+    config.tools.web_search.tavily.api_key = String::new();
+    config.tools.web_search.tavily.env_key = "RESHAPE_TEST_MISSING_TAVILY_KEY".to_string();
+
+    let error = match build_runtime(config) {
+        Ok(_) => panic!("runtime should reject missing Tavily token"),
+        Err(error) => error,
+    };
+
+    assert!(error.to_string().contains("Tavily"));
 }
 
 #[test]

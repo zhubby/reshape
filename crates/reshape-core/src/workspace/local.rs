@@ -46,7 +46,25 @@ impl LocalWorkspace {
         let extension = relative.extension().and_then(|value| value.to_str());
         let supported = matches!(
             extension,
-            Some("html" | "htm" | "js" | "css" | "json" | "md" | "txt")
+            Some(
+                "html"
+                    | "htm"
+                    | "js"
+                    | "css"
+                    | "json"
+                    | "md"
+                    | "txt"
+                    | "png"
+                    | "jpg"
+                    | "jpeg"
+                    | "gif"
+                    | "webp"
+                    | "mp4"
+                    | "webm"
+                    | "mp3"
+                    | "wav"
+                    | "pdf"
+            )
         );
         if !supported {
             tracing::warn!(path, "unsupported workspace file type");
@@ -169,6 +187,19 @@ impl Workspace for LocalWorkspace {
         tokio::fs::write(&path, content).await?;
         let relative = self.strip_root(path);
         tracing::info!(path = %relative.display(), "wrote workspace text file");
+        Ok(relative)
+    }
+
+    async fn write_bytes(&self, path: &str, content: &[u8]) -> Result<PathBuf> {
+        tracing::debug!(
+            path,
+            content_len = content.len(),
+            "writing workspace binary file"
+        );
+        let path = self.resolve_for_write(path).await?;
+        tokio::fs::write(&path, content).await?;
+        let relative = self.strip_root(path);
+        tracing::info!(path = %relative.display(), "wrote workspace binary file");
         Ok(relative)
     }
 
