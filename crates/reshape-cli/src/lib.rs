@@ -6,13 +6,11 @@ use std::time::Duration;
 use clap::{Args, Parser, Subcommand};
 use reshape_browser::agent_browser::{BrowserOptions, BrowserSession};
 use reshape_browser::{AgentBrowserRenderer, BrowserRenderer};
-use reshape_core::bus::EventBus;
 use reshape_core::config::{AppConfig, validate_workspace};
 use reshape_core::error::{ReshapeError, Result};
-use reshape_core::ingress::IngressSource;
 use reshape_core::llm::{LlmProvider, OpenAiChatCompletionProvider};
 use reshape_core::observability::NoopTelemetry;
-use reshape_core::protocol::{Envelope, InputEvent, OutputEvent};
+use reshape_core::protocol::OutputEvent;
 use reshape_core::runtime::{AgentRuntime, RuntimeDeps, RuntimeLimits};
 use reshape_core::session::store::{FileSessionStore, InMemorySessionStore, SessionStore};
 use reshape_core::tools::InMemoryToolRegistry;
@@ -21,7 +19,6 @@ use reshape_core::tools::file::FileTool;
 use reshape_core::workspace::local::LocalWorkspace;
 use serde::Deserialize;
 use tokio::net::TcpListener;
-use tokio::sync::mpsc;
 use tracing_subscriber::filter::LevelFilter;
 
 pub mod rpc_protocol;
@@ -670,50 +667,4 @@ pub fn open_startup_browser(
         .open_url(&url)
         .err()
         .map(|error| format!("browser startup open failed: {error}"))
-}
-
-pub async fn process_ingress_once<I, B>(
-    ingress: &mut I,
-    bus: &B,
-    inbound_rx: &mut mpsc::Receiver<Envelope<InputEvent>>,
-    outbound_rx: &mut mpsc::Receiver<Envelope<OutputEvent>>,
-    runtime: &AgentRuntime,
-) -> Result<Option<OutputEvent>>
-where
-    I: IngressSource,
-    B: EventBus,
-{
-    let Some(event) = ingress.next_event().await? else {
-        tracing::debug!(ingress = ingress.name(), "ingress returned no event");
-        return Ok(None);
-    };
-
-    tracing::debug!(ingress = ingress.name(), "processing ingress event");
-    bus.publish_inbound(Envelope::new(event)).await?;
-    let inbound = inbound_rx.recv().await.ok_or_else(closed_bus_error)?;
-    tracing::debug!(
-        message_id = %inbound.header.message_id,
-        trace_id = %inbound.header.trace_id,
-        "received event from inbound bus"
-    );
-    let outbound = runtime.process(inbound).await?;
-    tracing::debug!(
-        message_id = %outbound.header.message_id,
-        trace_id = %outbound.header.trace_id,
-        "runtime produced outbound event"
-    );
-    bus.publish_outbound(outbound).await?;
-
-    let output = outbound_rx
-        .recv()
-        .await
-        .ok_or_else(closed_bus_error)?
-        .payload;
-    tracing::debug!("received output from outbound bus");
-    Ok(Some(output))
-}
-
-fn closed_bus_error() -> ReshapeError {
-    tracing::error!("in-process bus closed");
-    std::io::Error::new(std::io::ErrorKind::BrokenPipe, "in-process bus closed").into()
 }

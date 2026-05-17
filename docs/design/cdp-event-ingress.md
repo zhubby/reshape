@@ -22,7 +22,7 @@ Each CDP event should include:
 
 ## Runtime Boundary
 
-CDP ingress implements the same ingress contract as CLI stdin. It must not call `AgentRuntime` internals directly. The only handoff is a normalized `Envelope<InputEvent>`.
+CDP input should enter through the same JSON-RPC WebSocket boundary as user text. It must not call `AgentRuntime` internals directly. The only handoff is a normalized `Envelope<InputEvent>`.
 
 ## Failure Handling
 

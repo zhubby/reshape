@@ -4,10 +4,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use reshape_browser::{BrowserRenderError, BrowserRenderer};
 use reshape_cli::{CliArgs, build_runtime, build_runtime_with_provider};
-use reshape_core::bus::InProcessBus;
 use reshape_core::error::Result as CoreResult;
-use reshape_core::ingress::IngressSource;
-use reshape_core::ingress::cli_stdin::CliStdinIngress;
 use reshape_core::llm::{ChatMessage, ChatOptions, LlmProvider, LlmResponse, ToolCall};
 use reshape_core::protocol::{Envelope, InputEvent, InputSource, OutputEvent};
 use tokio::sync::Mutex as TokioMutex;
@@ -197,7 +194,7 @@ async fn cli_runtime_builder_can_create_page_with_injected_provider() {
     let output = runtime
         .process(Envelope::new(InputEvent::UserText {
             text: "create page".to_string(),
-            source: InputSource::Cli,
+            source: InputSource::WebSocket,
         }))
         .await
         .unwrap();
@@ -410,77 +407,6 @@ impl BrowserRenderer for FakeBrowserRenderer {
         self.events.lock().unwrap().push("close".to_string());
         Ok(())
     }
-}
-
-#[tokio::test]
-async fn cli_stdin_ingress_skips_blank_lines_without_ending() {
-    let input = tokio::io::BufReader::new(&b"\nmake a page\n"[..]);
-    let mut ingress = CliStdinIngress::new(input);
-
-    let event = ingress.next_event().await.unwrap().unwrap();
-
-    assert_eq!(
-        event,
-        InputEvent::UserText {
-            text: "make a page".to_string(),
-            source: InputSource::Cli,
-        }
-    );
-}
-
-#[tokio::test]
-async fn cli_ingress_bus_runtime_chain_creates_workspace_file() {
-    let dir = tempfile::tempdir().unwrap();
-    let config = CliArgs::parse_from(["reshape", "--workspace", dir.path().to_str().unwrap()])
-        .into_config()
-        .unwrap();
-    let runtime = build_runtime_with_provider(
-        config,
-        Arc::new(ScriptedLlmProvider::new([
-            LlmResponse {
-                content: "Writing".to_string(),
-                tool_calls: vec![ToolCall {
-                    id: "write".to_string(),
-                    name: "write_file".to_string(),
-                    arguments: serde_json::json!({
-                        "path": "index.html",
-                        "content": "<h1>CLI</h1>"
-                    }),
-                }],
-            },
-            LlmResponse {
-                content: "Done".to_string(),
-                tool_calls: vec![ToolCall {
-                    id: "complete".to_string(),
-                    name: "complete_task".to_string(),
-                    arguments: serde_json::json!({"summary": "CLI page created"}),
-                }],
-            },
-        ])),
-    )
-    .unwrap();
-    let (bus, mut inbound_rx, mut outbound_rx) = InProcessBus::new(8);
-    let input = tokio::io::BufReader::new(&b"create a page\n"[..]);
-    let mut ingress = CliStdinIngress::new(input);
-
-    let output = reshape_cli::process_ingress_once(
-        &mut ingress,
-        &bus,
-        &mut inbound_rx,
-        &mut outbound_rx,
-        &runtime,
-    )
-    .await
-    .unwrap()
-    .unwrap();
-
-    assert_eq!(
-        output,
-        OutputEvent::Completed {
-            summary: "CLI page created".to_string()
-        }
-    );
-    assert!(dir.path().join("index.html").exists());
 }
 
 #[derive(Debug)]

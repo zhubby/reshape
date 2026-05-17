@@ -68,7 +68,6 @@ pub enum InputEvent {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub enum InputSource {
-    Cli,
     Cdp,
     Plugin,
     WebSocket,

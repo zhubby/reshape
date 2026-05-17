@@ -2,7 +2,7 @@
 
 Reshape is a local, single-session agent foundation for AI-rendered web pages.
 
-The project goal is to let a user describe an interface in natural language, have an agent use an LLM to create or update HTML, CSS, JavaScript, and related files in a watched workspace, and let a browser render the result through future CDP and browser-extension adapters.
+The project goal is to let a user describe an interface in natural language, have an agent use an LLM to create or update HTML, CSS, JavaScript, and related files in a watched workspace, and let a browser render the result through the local WebSocket-driven UI.
 
 ## Current Scope
 
@@ -19,9 +19,9 @@ This repository currently implements the agent foundation plus the first browser
 - A system prompt contract for page-generation behavior.
 - A vendored `agent-browser` 0.27.0 CLI crate with an additive Rust façade.
 - An optional `reshape-browser` adapter that opens `index.html` through the browser façade after a completed turn.
-- Design documents for future CDP event ingress, browser plugin, and observability layers.
+- Design documents for CDP event normalization, browser plugin protocol, and observability layers.
 
-Browser rendering is wired at the CLI/output-adapter layer. CDP event ingress and the floating browser-plugin chat UI remain adapter designs and are not coupled into the agent runtime.
+Browser rendering is wired at the CLI/output-adapter layer. User text enters through the local JSON-RPC WebSocket endpoint and is normalized before it reaches the agent runtime.
 
 ## Architecture
 
@@ -29,7 +29,7 @@ Reshape is designed as a set of focused Rust modules. Modules communicate throug
 
 ```text
 CLI Process
-  -> IngressSource
+  -> JSON-RPC WebSocket
   -> Envelope<InputEvent>
   -> AgentRuntime
   -> LlmProvider
@@ -40,8 +40,8 @@ CLI Process
 
 Workspace crates:
 
-- `crates/reshape-core`: protocol, runtime, session, LLM, tools, workspace, ingress, and observability contracts.
-- `crates/reshape-cli`: CLI argument parsing, dependency assembly, stdin loop, and optional browser-render output adapter.
+- `crates/reshape-core`: protocol, runtime, session, LLM, tools, workspace, and observability contracts.
+- `crates/reshape-cli`: CLI argument parsing, dependency assembly, JSON-RPC WebSocket server, and browser-render output adapter.
 - `crates/reshape-browser`: `BrowserRenderer` trait and `AgentBrowserRenderer` implementation backed by the browser façade.
 - `crates/agent-browser`: vendored `vercel-labs/agent-browser` 0.27.0 `cli/` source with additive `src/lib.rs` and `src/facade.rs`.
 
@@ -53,7 +53,6 @@ Core modules:
 - `llm`: provider trait, chat messages, tool-call types, and OpenAI provider.
 - `tools`: `Tool`, `ToolRegistry`, `ToolContext`, `ToolResult`, and built-in tools.
 - `workspace`: safe local file access and workspace watcher traits.
-- `ingress`: input-source abstraction for CLI stdin and future adapters.
 - `observability`: telemetry trait boundary for logs, audit, metrics, and health.
 The core runtime does not import `agent-browser` or `reshape-browser`; browser behavior is composed by `reshape-cli`.
 
@@ -71,7 +70,7 @@ The runtime:
 6. Continues until the model returns a final response or calls `complete_task`.
 7. Persists session history and returns an `Envelope<OutputEvent>`.
 
-The runtime does not know whether input came from CLI stdin, CDP, a browser plugin, or tests. Those sources are adapters that normalize their input into `InputEvent`.
+The runtime receives normalized `InputEvent` values. Runtime callers decide how transport-specific input, currently JSON-RPC WebSocket messages, is converted into protocol events.
 
 ## Workspace Contract
 
@@ -98,9 +97,9 @@ cargo run -p reshape-cli -- --workspace ./page
 
 The CLI starts the local server and opens the default local URL in the browser
 automatically. If the workspace does not have `index.html` yet, Reshape writes a
-default static homepage so the browser has a clear starting surface. Then type a
-natural-language request into stdin; generated pages replace the default by
-writing `workspace/index.html`.
+default static homepage so the browser has a clear starting surface. Send a
+natural-language request through the local WebSocket UI; generated pages replace
+the default by writing `workspace/index.html`.
 
 Agent turns are prompted to produce HTML artifacts in the workspace rather than
 raw HTML in chat. `index.html` acts as the wiki-style hub: generated topic pages
@@ -150,8 +149,8 @@ The test suite covers:
 Additional design notes live in `docs/`:
 
 - `docs/agent-system-prompt.md`: system prompt contract for the page agent.
-- `docs/design/cdp-event-ingress.md`: future CDP event normalization.
-- `docs/design/browser-plugin-websocket.md`: future browser-plugin WebSocket protocol.
+- `docs/design/cdp-event-ingress.md`: CDP event normalization.
+- `docs/design/browser-plugin-websocket.md`: browser-plugin WebSocket protocol.
 - `docs/design/browser-render-pipeline.md`: future browser rendering and refresh pipeline.
 - `docs/design/agent-browser-source-integration.md`: vendored `agent-browser` source boundaries and sync process.
 - `docs/design/runtime-observability.md`: telemetry, audit, metrics, and health design.
@@ -160,7 +159,7 @@ Additional design notes live in `docs/`:
 
 The next practical milestones are:
 
-- Add a WebSocket ingress adapter for the browser extension.
+- Route browser-extension user input through the JSON-RPC WebSocket protocol.
 - Add a CDP adapter that turns user browser actions into `InputEvent::CdpUserEvent`.
 - Extend the browser render adapter from completion-triggered `index.html` open to watcher-driven refresh and feedback.
 - Replace the no-op telemetry sink with structured logs and local audit persistence.

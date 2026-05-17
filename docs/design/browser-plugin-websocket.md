@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The browser plugin provides a floating conversation window and forwards user messages to the local CLI process over WebSocket. It is an ingress adapter, not a separate session manager.
+The browser plugin provides a floating conversation window and forwards user messages to the local CLI process over WebSocket. It is the user-input transport, not a separate session manager.
 
 ## Connection Contract
 
