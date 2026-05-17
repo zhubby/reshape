@@ -330,6 +330,16 @@ async fn startup_generates_default_index_when_workspace_is_empty() {
     assert!(html.contains("LLM 动态生成 HTML"));
     assert!(html.contains("workspace"));
     assert!(html.contains("data-reshape-default-homepage"));
+    assert!(html.contains(r#"<link rel="stylesheet" href="assets/site.css">"#));
+    assert!(!html.contains("<style>"));
+
+    let css = tokio::fs::read_to_string(dir.path().join("assets").join("site.css"))
+        .await
+        .unwrap();
+    assert!(css.contains(":root"));
+    assert!(css.contains(".masthead"));
+    assert!(css.contains(".hero"));
+    assert!(css.contains(".prose"));
 }
 
 #[tokio::test]
@@ -349,6 +359,50 @@ async fn startup_keeps_existing_workspace_index() {
             .await
             .unwrap(),
         "<h1>custom</h1>"
+    );
+}
+
+#[tokio::test]
+async fn startup_keeps_existing_default_stylesheet() {
+    let dir = tempfile::tempdir().unwrap();
+    tokio::fs::create_dir_all(dir.path().join("assets"))
+        .await
+        .unwrap();
+    tokio::fs::write(
+        dir.path().join("assets").join("site.css"),
+        "body { color: red; }",
+    )
+    .await
+    .unwrap();
+
+    let generated = reshape_cli::ensure_workspace_index_html(dir.path())
+        .await
+        .unwrap();
+
+    assert!(generated);
+    assert_eq!(
+        tokio::fs::read_to_string(dir.path().join("assets").join("site.css"))
+            .await
+            .unwrap(),
+        "body { color: red; }"
+    );
+}
+
+#[tokio::test]
+async fn startup_rejects_assets_path_that_is_not_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    tokio::fs::write(dir.path().join("assets"), "not a directory")
+        .await
+        .unwrap();
+
+    let error = reshape_cli::ensure_workspace_index_html(dir.path())
+        .await
+        .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("workspace assets path exists but is not a directory")
     );
 }
 

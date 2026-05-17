@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN" data-reshape-default-homepage>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reshape — LLM Dynamic HTML Workspace</title>
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<nav class="masthead" aria-label="Primary">
+  <a class="wordmark" href="/">Reshape</a>
+  <ul class="nav">
+    <li><a href="#model">模型</a></li>
+    <li><a href="#flow">流程</a></li>
+    <li><a href="#workspace">Workspace</a></li>
+  </ul>
+</nav>
+
+<main class="article">
+  <header class="hero">
+    <div class="eyebrow">001 — Local render surface</div>
+    <h1>LLM 动态生成 HTML，由浏览器即时渲染</h1>
+    <p class="deck">Reshape 把自然语言请求转成 workspace 里的文件变更，再通过本地 7331 静态服务呈现结果。这里是默认画布；当 agent 写入新的 index.html，它会让位给真实产物。</p>
+    <div class="meta">
+      <span>localhost:7331</span>
+      <span>single session</span>
+      <span>HTML / CSS / JS</span>
+    </div>
+  </header>
+
+  <section class="render-plane" aria-label="Render pipeline">
+<pre><code>user request
+  -> LLM tool loop
+  -> workspace/index.html
+  -> local static server
+  -> browser render</code></pre>
+  </section>
+
+  <hr class="divider">
+
+  <section class="prose" id="model">
+    <h2>项目的核心模型</h2>
+    <p>Reshape 不是把界面藏在后端状态里，而是把页面当作可以被模型直接编辑的文件。HTML、CSS、JavaScript 都落在同一个 workspace 中，浏览器只负责忠实呈现这些文件当前的样子。</p>
+    <p>这让每一次生成都保持可检查、可回滚、可继续修改。agent 不需要猜测页面状态；它读取文件、写入文件，然后由本地浏览器验证结果。</p>
+  </section>
+
+  <aside class="pull-quote">
+    Workspace 是源，浏览器是反馈面，LLM 是持续改写这个界面的操作者。
+    <span class="pull-quote-source">— Reshape runtime contract</span>
+  </aside>
+
+  <section class="prose" id="flow">
+    <h2>一次生成如何发生</h2>
+    <ol class="principles">
+      <li>
+        <div>
+          <div class="principle-title">输入变成一个本地 turn</div>
+          <div class="principle-body">本地 WebSocket 入口把用户意图标准化为协议事件，交给固定的 local session。</div>
+        </div>
+      </li>
+      <li>
+        <div>
+          <div class="principle-title">模型选择文件工具</div>
+          <div class="principle-body">LLM 在预算限制内读取、写入、列出或删除 workspace 文件，直到页面足以完成当前任务。</div>
+        </div>
+      </li>
+      <li>
+        <div>
+          <div class="principle-title">静态服务暴露结果</div>
+          <div class="principle-body">7331 端口从 workspace 根目录提供资源，根路径默认映射到 index.html。</div>
+        </div>
+      </li>
+      <li>
+        <div>
+          <div class="principle-title">浏览器成为真实渲染器</div>
+          <div class="principle-body">生成结果不是截图或模拟预览，而是在本地浏览器中运行的页面。</div>
+        </div>
+      </li>
+    </ol>
+  </section>
+
+  <hr class="divider">
+
+  <section class="prose" id="workspace">
+    <h2>默认首页的边界</h2>
+    <p>这个页面只在 workspace 下没有 index.html 时自动生成。它的职责是让启动后的浏览器有一个清晰的第一屏，同时说明当前服务的渲染对象。</p>
+    <p>一旦 agent 根据请求创建页面，新的 index.html 会成为事实来源。Reshape 不会用默认首页覆盖已有文件，因为已有文件可能就是用户或模型正在工作的界面。</p>
+  </section>
+
+  <blockquote class="inline-note">
+    <p>本地静态首页是空 workspace 的起点，不是最终产品界面。真正的页面由后续 LLM turn 写入 workspace。</p>
+  </blockquote>
+</main>
+
+<footer class="site-footer">
+  <span class="site-footer-copy">© 2026 Reshape</span>
+  <a href="/">workspace/index.html</a>
+</footer>
+</body>
+</html>

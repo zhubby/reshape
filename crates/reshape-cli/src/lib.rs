@@ -646,13 +646,50 @@ pub async fn ensure_workspace_index_html(workspace_root: &Path) -> Result<bool> 
         Err(error) => return Err(error.into()),
     }
 
+    ensure_default_site_css(workspace_root).await?;
     tokio::fs::write(&index_path, default_workspace_index_html()).await?;
     Ok(true)
 }
 
+async fn ensure_default_site_css(workspace_root: &Path) -> Result<()> {
+    let assets_path = workspace_root.join("assets");
+    match tokio::fs::metadata(&assets_path).await {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => {
+            return Err(ReshapeError::Config(format!(
+                "workspace assets path exists but is not a directory: {}",
+                assets_path.display()
+            )));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            tokio::fs::create_dir_all(&assets_path).await?;
+        }
+        Err(error) => return Err(error.into()),
+    }
+
+    let css_path = assets_path.join("site.css");
+    match tokio::fs::metadata(&css_path).await {
+        Ok(metadata) if metadata.is_file() => Ok(()),
+        Ok(_) => Err(ReshapeError::Config(format!(
+            "workspace stylesheet path exists but is not a file: {}",
+            css_path.display()
+        ))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            tokio::fs::write(&css_path, default_workspace_site_css()).await?;
+            Ok(())
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
 #[must_use]
 pub fn default_workspace_index_html() -> &'static str {
-    include_str!("default_index.html")
+    include_str!("../templates/default_index.html")
+}
+
+#[must_use]
+pub fn default_workspace_site_css() -> &'static str {
+    include_str!("../templates/default_site.css")
 }
 
 pub fn open_startup_browser(

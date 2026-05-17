@@ -35,6 +35,18 @@ fn prompt_requires_wiki_style_workspace_structure() {
 }
 
 #[test]
+fn prompt_requires_default_layout_and_stylesheet_contract() {
+    let prompt = system_prompt();
+
+    assert!(prompt.contains("assets/site.css"));
+    assert!(prompt.contains(".masthead"));
+    assert!(prompt.contains(".hero"));
+    assert!(prompt.contains(".prose"));
+    assert!(prompt.contains("--measure"));
+    assert!(prompt.contains("inline"));
+}
+
+#[test]
 fn prompt_preserves_single_session_boundary() {
     let prompt = system_prompt();
 
