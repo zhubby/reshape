@@ -14,6 +14,7 @@ pub struct BrowserOptions {
     pub headed: bool,
     pub debug: bool,
     pub allow_file_access: bool,
+    pub extensions: Vec<String>,
     pub idle_timeout: Option<String>,
     pub default_timeout: Option<u64>,
     pub no_auto_dialog: bool,
@@ -26,6 +27,7 @@ impl Default for BrowserOptions {
             headed: false,
             debug: false,
             allow_file_access: false,
+            extensions: Vec::new(),
             idle_timeout: None,
             default_timeout: None,
             no_auto_dialog: false,
@@ -149,6 +151,12 @@ impl BrowserSession {
         }
         if self.options.allow_file_access {
             std::env::set_var("AGENT_BROWSER_ALLOW_FILE_ACCESS", "1");
+        }
+        if !self.options.extensions.is_empty() {
+            std::env::set_var(
+                "AGENT_BROWSER_EXTENSIONS",
+                self.options.extensions.join(","),
+            );
         }
         if let Some(idle_timeout) = &self.options.idle_timeout {
             std::env::set_var("AGENT_BROWSER_IDLE_TIMEOUT_MS", idle_timeout);

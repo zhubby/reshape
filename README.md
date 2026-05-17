@@ -107,6 +107,10 @@ raw HTML in chat. `index.html` acts as the wiki-style hub: generated topic pages
 should live under `pages/`, shared assets under `assets/`, and each generated
 HTML page should be linked from the hub with relative links.
 
+When the production browser extension build exists at
+`extensions/reshape/build/chrome-mv3-prod`, startup loads it automatically into
+the managed browser session as an unpacked Chrome extension.
+
 The default provider is OpenAI Chat Completions. Put the API key directly in `~/.reshape/config.toml` as `llm.openai.api_key` before running an agent turn.
 
 To render the completed `index.html` through the embedded browser adapter:

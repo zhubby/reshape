@@ -208,6 +208,10 @@ impl CliArgs {
             session: options.browser_session,
             headed: true,
             allow_file_access: true,
+            extensions: bundled_browser_extension_paths()
+                .into_iter()
+                .map(|path| path.to_string_lossy().to_string())
+                .collect(),
             ..BrowserOptions::default()
         }
     }
@@ -409,6 +413,24 @@ fn resolve_workspace(
 
 fn default_app_dir(home: &Path) -> PathBuf {
     home.join(".reshape")
+}
+
+pub fn bundled_browser_extension_paths() -> Vec<PathBuf> {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")));
+    let extension = repo_root
+        .join("extensions")
+        .join("reshape")
+        .join("build")
+        .join("chrome-mv3-prod");
+
+    if extension.join("manifest.json").is_file() {
+        vec![extension]
+    } else {
+        Vec::new()
+    }
 }
 
 fn default_config_toml(workspace: &Path) -> String {

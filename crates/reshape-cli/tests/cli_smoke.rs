@@ -280,6 +280,32 @@ fn startup_browser_defaults_to_visible_window() {
     assert!(options.headed);
 }
 
+#[test]
+fn startup_browser_loads_bundled_extension_build_when_available() {
+    let args = CliArgs::parse_from(["reshape"]);
+
+    let options = args.startup_browser_options();
+    let expected = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .unwrap()
+        .join("extensions")
+        .join("reshape")
+        .join("build")
+        .join("chrome-mv3-prod");
+
+    if expected.join("manifest.json").is_file() {
+        assert!(
+            options
+                .extensions
+                .iter()
+                .any(|path| path == &expected.to_string_lossy())
+        );
+    } else {
+        assert!(options.extensions.is_empty());
+    }
+}
+
 #[tokio::test]
 async fn startup_generates_default_index_when_workspace_is_empty() {
     let dir = tempfile::tempdir().unwrap();

@@ -29,3 +29,8 @@ fn browser_session_builds_core_rendering_commands() {
 
     assert_eq!(session.close_command()["action"], "close");
 }
+
+#[test]
+fn browser_options_default_has_no_extensions() {
+    assert!(BrowserOptions::default().extensions.is_empty());
+}
