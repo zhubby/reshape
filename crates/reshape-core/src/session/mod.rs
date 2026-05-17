@@ -2,8 +2,9 @@ pub mod store;
 
 use crate::error::{ReshapeError, Result};
 use crate::protocol::{DEFAULT_SESSION_KEY, InputEvent, OutputEvent};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Session {
     pub session_key: String,
     pub turn_index: u64,
@@ -12,13 +13,13 @@ pub struct Session {
     pub budget: BudgetUsage,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SessionMessage {
     Input(InputEvent),
     Output(OutputEvent),
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BudgetUsage {
     pub tool_iterations: usize,
     pub tool_calls: usize,

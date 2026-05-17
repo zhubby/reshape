@@ -109,6 +109,30 @@ pub enum OutputEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnProgressEvent {
+    pub turn_id: String,
+    pub sequence: u32,
+    pub kind: TurnProgressKind,
+    pub tool_name: Option<String>,
+    pub arguments_preview: Option<String>,
+    pub result_preview: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnProgressKind {
+    TurnStarted,
+    AssistantMessage,
+    ToolStarted,
+    ToolFinished,
+    ToolFailed,
+    TurnCompleted,
+    TurnFailed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub enum ErrorCode {
     InvalidSchema,
     ValidationFailed,

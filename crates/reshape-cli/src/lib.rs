@@ -14,7 +14,7 @@ use reshape_core::llm::{LlmProvider, OpenAiChatCompletionProvider};
 use reshape_core::observability::NoopTelemetry;
 use reshape_core::protocol::{Envelope, InputEvent, OutputEvent};
 use reshape_core::runtime::{AgentRuntime, RuntimeDeps, RuntimeLimits};
-use reshape_core::session::store::InMemorySessionStore;
+use reshape_core::session::store::{FileSessionStore, InMemorySessionStore, SessionStore};
 use reshape_core::tools::InMemoryToolRegistry;
 use reshape_core::tools::complete::CompleteTaskTool;
 use reshape_core::tools::file::FileTool;
@@ -184,14 +184,8 @@ impl CliArgs {
             return None;
         }
 
-        let browser_options = BrowserOptions {
-            session: options.browser_session,
-            headed: options.browser_headed,
-            allow_file_access: true,
-            ..BrowserOptions::default()
-        };
         Some(Box::new(AgentBrowserRenderer::new(BrowserSession::new(
-            browser_options,
+            self.render_browser_options(),
         ))))
     }
 
@@ -204,16 +198,13 @@ impl CliArgs {
     #[must_use]
     pub fn startup_browser_options(&self) -> BrowserOptions {
         let options = self.agent_options();
-        BrowserOptions {
-            session: options.browser_session,
-            headed: true,
-            allow_file_access: true,
-            extensions: bundled_browser_extension_paths()
-                .into_iter()
-                .map(|path| path.to_string_lossy().to_string())
-                .collect(),
-            ..BrowserOptions::default()
-        }
+        managed_browser_options(options.browser_session, true)
+    }
+
+    #[must_use]
+    pub fn render_browser_options(&self) -> BrowserOptions {
+        let options = self.agent_options();
+        managed_browser_options(options.browser_session, options.browser_headed)
     }
 
     #[must_use]
@@ -314,6 +305,19 @@ impl AgentOptions {
     }
 }
 
+fn managed_browser_options(session: String, headed: bool) -> BrowserOptions {
+    BrowserOptions {
+        session,
+        headed,
+        allow_file_access: true,
+        extensions: bundled_browser_extension_paths()
+            .into_iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect(),
+        ..BrowserOptions::default()
+    }
+}
+
 pub async fn run() -> Result<()> {
     let args = CliArgs::parse();
     tracing::debug!(command = ?args.command_kind(), "cli arguments parsed");
@@ -335,13 +339,28 @@ pub async fn run() -> Result<()> {
     if ensure_workspace_index_html(&workspace_root).await? {
         tracing::info!(workspace = %workspace_root.display(), "generated default workspace index.html");
     }
-    let runtime = build_runtime(config)?;
+    let runtime = build_runtime_with_session_store(
+        config,
+        Arc::new(FileSessionStore::new(default_session_path(&home))),
+    )?;
     let listener = TcpListener::bind(server_config.bind_addr()?).await?;
-    spawn_startup_browser_open(args.startup_browser_renderer(), server_config.clone());
-    rpc_server::serve_rpc_listener(listener, runtime, workspace_root).await
+    let browser: Arc<dyn BrowserRenderer> = Arc::new(AgentBrowserRenderer::new(
+        BrowserSession::new(args.startup_browser_options()),
+    ));
+    spawn_startup_browser_open(browser.clone(), server_config.clone());
+    rpc_server::serve_rpc_listener_with_render_loop(
+        listener,
+        runtime,
+        workspace_root,
+        rpc_server::RpcRenderLoop {
+            browser,
+            local_url: server_config.local_url(),
+        },
+    )
+    .await
 }
 
-fn spawn_startup_browser_open(browser: Box<dyn BrowserRenderer>, server_config: ServerConfig) {
+fn spawn_startup_browser_open(browser: Arc<dyn BrowserRenderer>, server_config: ServerConfig) {
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(100)).await;
         match tokio::task::spawn_blocking(move || {
@@ -530,17 +549,36 @@ fn apply_llm_file_config(config: &mut AppConfig, file_llm: Option<FileLlmConfig>
 }
 
 pub fn build_runtime(config: AppConfig) -> Result<AgentRuntime> {
+    build_runtime_with_session_store(config, Arc::new(InMemorySessionStore::default()))
+}
+
+pub fn build_runtime_with_session_store(
+    config: AppConfig,
+    sessions: Arc<dyn SessionStore>,
+) -> Result<AgentRuntime> {
     let provider: Arc<dyn LlmProvider> = match config.llm.provider {
         reshape_core::config::LlmProviderKind::OpenAi => Arc::new(
             OpenAiChatCompletionProvider::from_config(config.llm.openai.clone())?,
         ),
     };
-    build_runtime_with_provider(config, provider)
+    build_runtime_with_provider_and_session_store(config, provider, sessions)
 }
 
 pub fn build_runtime_with_provider(
     config: AppConfig,
     provider: Arc<dyn LlmProvider>,
+) -> Result<AgentRuntime> {
+    build_runtime_with_provider_and_session_store(
+        config,
+        provider,
+        Arc::new(InMemorySessionStore::default()),
+    )
+}
+
+pub fn build_runtime_with_provider_and_session_store(
+    config: AppConfig,
+    provider: Arc<dyn LlmProvider>,
+    sessions: Arc<dyn SessionStore>,
 ) -> Result<AgentRuntime> {
     tracing::debug!(
         workspace = %config.workspace.root.display(),
@@ -561,7 +599,7 @@ pub fn build_runtime_with_provider(
         RuntimeDeps {
             llm: provider,
             tools: Arc::new(tools),
-            sessions: Arc::new(InMemorySessionStore::default()),
+            sessions,
             workspace,
             telemetry: Arc::new(NoopTelemetry),
         },
@@ -570,6 +608,10 @@ pub fn build_runtime_with_provider(
             max_tool_calls: config.runtime.max_tool_calls,
         },
     ))
+}
+
+fn default_session_path(home: &Path) -> PathBuf {
+    default_app_dir(home).join("session-local-main.json")
 }
 
 pub fn render_completed_output(

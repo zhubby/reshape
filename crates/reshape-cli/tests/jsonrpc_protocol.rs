@@ -1,10 +1,12 @@
 use reshape_cli::rpc_protocol::{
-    JsonRpcErrorCode, RpcRequest, RpcResponse, parse_rpc_handshake, parse_rpc_request,
-    rpc_handshake_ack,
+    JsonRpcErrorCode, RpcProgressNotification, RpcRequest, RpcResponse, parse_rpc_handshake,
+    parse_rpc_request, rpc_handshake_ack,
 };
 use reshape_core::protocol::{
     DEFAULT_SCHEMA_VERSION, DEFAULT_SESSION_KEY, Envelope, InputEvent, InputSource, OutputEvent,
+    TurnProgressEvent, TurnProgressKind,
 };
+use reshape_core::session::Session;
 
 #[test]
 fn user_text_request_converts_to_websocket_input_envelope() {
@@ -58,6 +60,55 @@ fn completed_output_converts_to_stable_wire_response() {
         result["output"]["summary"],
         "Mock page generated in index.html"
     );
+}
+
+#[test]
+fn progress_event_converts_to_jsonrpc_notification() {
+    let notification = RpcProgressNotification::new(TurnProgressEvent {
+        turn_id: "turn-1".to_string(),
+        sequence: 2,
+        kind: TurnProgressKind::ToolStarted,
+        tool_name: Some("write_file".to_string()),
+        arguments_preview: Some(r#"{"path":"index.html"}"#.to_string()),
+        result_preview: None,
+        message: "Running write_file".to_string(),
+    });
+
+    let value = serde_json::to_value(notification).unwrap();
+
+    assert_eq!(value["jsonrpc"], "2.0");
+    assert_eq!(value["method"], "reshape.progress");
+    assert_eq!(value["params"]["turnId"], "turn-1");
+    assert_eq!(value["params"]["sequence"], 2);
+    assert_eq!(value["params"]["kind"], "tool_started");
+    assert_eq!(value["params"]["toolName"], "write_file");
+}
+
+#[test]
+fn session_history_converts_to_stable_wire_response() {
+    let mut session = Session::default();
+    session.record_input(InputEvent::UserText {
+        text: "make the page blue".to_string(),
+        source: InputSource::WebSocket,
+    });
+    session.record_output(OutputEvent::Completed {
+        summary: "Updated index.html".to_string(),
+    });
+    session.record_output(OutputEvent::ToolProgress {
+        tool_name: "write_file".to_string(),
+        message: "internal".to_string(),
+    });
+
+    let response = RpcResponse::history("history-1", &session);
+    let result = response.result.unwrap();
+
+    assert_eq!(result["schemaVersion"], DEFAULT_SCHEMA_VERSION);
+    assert_eq!(result["sessionKey"], DEFAULT_SESSION_KEY);
+    assert_eq!(result["messages"][0]["role"], "user");
+    assert_eq!(result["messages"][0]["text"], "make the page blue");
+    assert_eq!(result["messages"][1]["role"], "reshape");
+    assert_eq!(result["messages"][1]["text"], "Updated index.html");
+    assert_eq!(result["messages"].as_array().unwrap().len(), 2);
 }
 
 #[test]

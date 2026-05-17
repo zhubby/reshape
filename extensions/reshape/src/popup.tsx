@@ -1,17 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 
-import type { ChatResult, ConnectionStatus } from "./rpc"
+import type { ChatResult, ConnectionStatus, HistoryResult } from "./rpc"
 import { loadRpcAddress, saveRpcAddress } from "./storage"
-import type { TabContext } from "./protocol"
+import type { TabContext, TurnProgressEvent } from "./protocol"
+import {
+  appendActivityToWorkingMessage,
+  completeWorkingMessage,
+  connectionActionLabel,
+  effectiveConnectionStatus,
+  isConnectedToEditedAddress,
+  messagesFromHistory,
+  type PopupMessage
+} from "./popup-state"
 
-type ChatMessage = {
-  role: "user" | "reshape" | "system"
-  text: string
-}
+type ChatMessage = PopupMessage
+type BackgroundMessage = { type: "reshape.progress"; event: TurnProgressEvent }
 type BackgroundStatus = {
   status: ConnectionStatus
   statusText: string
   address?: string
+  history?: HistoryResult
 }
 type BackgroundResponse<T> =
   | ({ ok: true } & T)
@@ -23,31 +31,51 @@ type BackgroundResponse<T> =
 function IndexPopup() {
   const [rpcAddress, setRpcAddress] = useState("127.0.0.1:7331")
   const [status, setStatus] = useState<ConnectionStatus>("idle")
-  const [statusText, setStatusText] = useState("尚未握手")
+  const [statusText, setStatusText] = useState("Handshake not started")
+  const [connectedAddress, setConnectedAddress] = useState<string | undefined>()
   const [input, setInput] = useState("")
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: "system",
-      text: "配置 reshape RPC 地址并完成握手后即可聊天。"
+      text: "Set the reshape RPC address and complete the handshake to start chatting."
     }
   ])
   const didAutoConnect = useRef(false)
+  const effectiveStatus = effectiveConnectionStatus(status, rpcAddress, connectedAddress)
+  const canChat = isConnectedToEditedAddress(status, rpcAddress, connectedAddress)
+  const actionLabel = connectionActionLabel({
+    status,
+    rpcAddress,
+    connectedAddress
+  })
 
   const statusLabel = useMemo(() => {
-    switch (status) {
+    switch (effectiveStatus) {
       case "connected":
-        return "握手成功"
+        return "Connected"
       case "connecting":
-        return "握手中"
+        return "Connecting"
       case "error":
-        return "握手失败"
+        return "Handshake failed"
       case "idle":
-        return "未连接"
+        return "Not connected"
     }
-  }, [status])
+  }, [effectiveStatus])
 
   useEffect(() => {
     void initializeConnection()
+  }, [])
+
+  useEffect(() => {
+    const listener = (message: BackgroundMessage) => {
+      if (message?.type !== "reshape.progress") {
+        return
+      }
+      setMessages((current) => appendActivityToWorkingMessage(current, message.event))
+      setStatusText(message.event.message)
+    }
+    chrome.runtime.onMessage.addListener(listener)
+    return () => chrome.runtime.onMessage.removeListener(listener)
   }, [])
 
   async function initializeConnection() {
@@ -68,7 +96,7 @@ function IndexPopup() {
     if (!didAutoConnect.current) {
       didAutoConnect.current = true
       setStatus("connecting")
-      setStatusText("正在连接 reshape RPC...")
+      setStatusText("Connecting to reshape RPC...")
       try {
         const tab = await activeTabContext()
         const response = await sendBackground<{ status: BackgroundStatus }>({
@@ -79,7 +107,7 @@ function IndexPopup() {
         applyStatus(response.status)
       } catch (error) {
         setStatus("error")
-        setStatusText(error instanceof Error ? error.message : "握手失败")
+        setStatusText(error instanceof Error ? error.message : "Handshake failed")
       }
     }
   }
@@ -87,14 +115,20 @@ function IndexPopup() {
   function applyStatus(snapshot: BackgroundStatus) {
     setStatus(snapshot.status)
     setStatusText(snapshot.statusText)
+    setMessages((current) => messagesFromHistory(current, snapshot.history))
     if (snapshot.address) {
       setRpcAddress(snapshot.address)
+      setConnectedAddress(snapshot.status === "connected" ? snapshot.address : undefined)
+      return
+    }
+    if (snapshot.status !== "connected") {
+      setConnectedAddress(undefined)
     }
   }
 
   async function connect() {
     setStatus("connecting")
-    setStatusText("正在连接 reshape RPC...")
+    setStatusText("Connecting to reshape RPC...")
 
     try {
       await saveRpcAddress(rpcAddress)
@@ -107,18 +141,50 @@ function IndexPopup() {
       applyStatus(response.status)
     } catch (error) {
       setStatus("error")
-      setStatusText(error instanceof Error ? error.message : "握手失败")
+      setStatusText(error instanceof Error ? error.message : "Handshake failed")
+    }
+  }
+
+  async function disconnect() {
+    try {
+      const response = await sendBackground<{ status: BackgroundStatus }>({
+        type: "reshape.disconnect"
+      })
+      applyStatus(response.status)
+    } catch (error) {
+      setStatus("error")
+      setStatusText(error instanceof Error ? error.message : "Disconnect failed")
+    }
+  }
+
+  function handleConnectionAction() {
+    if (canChat) {
+      void disconnect()
+      return
+    }
+    void connect()
+  }
+
+  function handleAddressChange(value: string) {
+    setRpcAddress(value)
+    if (status === "connected" && value.trim() !== connectedAddress?.trim()) {
+      setStatusText("RPC address changed. Run handshake to connect.")
     }
   }
 
   async function sendMessage() {
     const text = input.trim()
-    if (!text || status !== "connected") {
+    if (!text || !canChat) {
       return
     }
 
     setInput("")
-    setMessages((current) => [...current, { role: "user", text }])
+    setStatusText("Agent is working...")
+    setMessages((current) => [
+      ...current,
+      { role: "user", text },
+      { role: "reshape", text: "Working...", status: "working", activity: [] }
+    ])
 
     try {
       const tab = await activeTabContext()
@@ -131,14 +197,20 @@ function IndexPopup() {
         tab
       })
       const result = response.result
-      applyStatus(response.status)
-      setMessages((current) => [...current, { role: "reshape", text: result.text }])
+      setStatus(response.status.status)
+      setStatusText(response.status.statusText)
+      if (response.status.address) {
+        setConnectedAddress(
+          response.status.status === "connected" ? response.status.address : undefined
+        )
+      }
+      setMessages((current) => completeWorkingMessage(current, result))
     } catch (error) {
       setMessages((current) => [
         ...current,
         {
           role: "system",
-          text: error instanceof Error ? error.message : "发送失败"
+          text: error instanceof Error ? error.message : "Send failed"
         }
       ])
       setStatus("error")
@@ -150,34 +222,35 @@ function IndexPopup() {
       <header style={styles.header}>
         <div>
           <h1 style={styles.title}>Reshape</h1>
-          <p style={styles.subtitle}>本地 RPC 聊天插件</p>
+          <p style={styles.subtitle}>Local RPC chat extension</p>
         </div>
-        <span style={{ ...styles.badge, ...statusColor(status) }}>{statusLabel}</span>
+        <span style={{ ...styles.badge, ...statusColor(effectiveStatus) }}>{statusLabel}</span>
       </header>
 
       <section style={styles.fieldGroup}>
         <label style={styles.label} htmlFor="rpc-address">
-          RPC 地址
+          RPC address
         </label>
         <div style={styles.addressRow}>
           <input
             id="rpc-address"
             value={rpcAddress}
-            onChange={(event) => setRpcAddress(event.currentTarget.value)}
+            onChange={(event) => handleAddressChange(event.currentTarget.value)}
             placeholder="127.0.0.1:7331"
             style={styles.input}
           />
-          <button type="button" onClick={connect} style={styles.secondaryButton}>
-            握手
+          <button type="button" onClick={handleConnectionAction} style={styles.secondaryButton}>
+            {actionLabel}
           </button>
         </div>
         <p style={styles.statusText}>{statusText}</p>
       </section>
 
-      <section style={styles.messages} aria-label="聊天消息">
+      <section style={styles.messages} aria-label="Chat messages">
         {messages.map((message, index) => (
           <article key={`${message.role}-${index}`} style={messageStyle(message.role)}>
-            {message.text}
+            <div>{message.text}</div>
+            {message.activity?.length ? <Activity events={message.activity} /> : null}
           </article>
         ))}
       </section>
@@ -191,15 +264,15 @@ function IndexPopup() {
         <input
           value={input}
           onChange={(event) => setInput(event.currentTarget.value)}
-          disabled={status !== "connected"}
-          placeholder={status === "connected" ? "告诉 reshape 要做什么..." : "请先握手"}
+          disabled={!canChat}
+          placeholder={canChat ? "Tell reshape what to do..." : "Handshake first"}
           style={styles.input}
         />
         <button
           type="submit"
-          disabled={status !== "connected" || input.trim().length === 0}
+          disabled={!canChat || input.trim().length === 0}
           style={styles.primaryButton}>
-          发送
+          Send
         </button>
       </form>
     </main>
@@ -225,6 +298,47 @@ function sendBackground<T>(message: Record<string, unknown>): Promise<T> {
 
 function isOkResponse<T>(response: BackgroundResponse<T> | undefined): response is { ok: true } & T {
   return response?.ok === true
+}
+
+function Activity({ events }: { events: TurnProgressEvent[] }) {
+  return (
+    <details style={styles.activity}>
+      <summary style={styles.activitySummary}>Activity</summary>
+      <ol style={styles.activityList}>
+        {events.map((event) => (
+          <li key={`${event.turnId}-${event.sequence}`} style={styles.activityItem}>
+            <span style={styles.activityKind}>{activityLabel(event)}</span>
+            {event.toolName ? <span style={styles.activityTool}>{event.toolName}</span> : null}
+            {event.argumentsPreview ? (
+              <code style={styles.activityCode}>{event.argumentsPreview}</code>
+            ) : null}
+            {event.resultPreview ? (
+              <code style={styles.activityCode}>{event.resultPreview}</code>
+            ) : null}
+          </li>
+        ))}
+      </ol>
+    </details>
+  )
+}
+
+function activityLabel(event: TurnProgressEvent): string {
+  switch (event.kind) {
+    case "turn_started":
+      return "Started"
+    case "assistant_message":
+      return "Message"
+    case "tool_started":
+      return "Running"
+    case "tool_finished":
+      return "Finished"
+    case "tool_failed":
+      return "Failed"
+    case "turn_completed":
+      return "Completed"
+    case "turn_failed":
+      return "Failed"
+  }
 }
 
 async function activeTabContext(): Promise<TabContext> {
@@ -326,6 +440,7 @@ const styles = {
     border: "1px solid #1f2937",
     borderRadius: 10,
     padding: "0 14px",
+    minWidth: 86,
     background: "#ffffff",
     color: "#111827",
     fontWeight: 700,
@@ -364,6 +479,48 @@ const styles = {
     fontSize: 13,
     lineHeight: 1.45,
     whiteSpace: "pre-wrap"
+  } as React.CSSProperties,
+  activity: {
+    marginTop: 8,
+    whiteSpace: "normal"
+  } as React.CSSProperties,
+  activitySummary: {
+    cursor: "pointer",
+    color: "#475467",
+    fontSize: 12,
+    fontWeight: 700
+  } as React.CSSProperties,
+  activityList: {
+    margin: "8px 0 0",
+    paddingLeft: 18,
+    display: "flex",
+    flexDirection: "column",
+    gap: 6
+  } as React.CSSProperties,
+  activityItem: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 4
+  } as React.CSSProperties,
+  activityKind: {
+    color: "#344054",
+    fontSize: 12,
+    fontWeight: 700
+  } as React.CSSProperties,
+  activityTool: {
+    color: "#475467",
+    fontSize: 12
+  } as React.CSSProperties,
+  activityCode: {
+    maxWidth: 260,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    borderRadius: 6,
+    padding: "5px 6px",
+    background: "#ffffff",
+    color: "#344054",
+    fontSize: 11,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace"
   } as React.CSSProperties,
   userMessage: {
     alignSelf: "flex-end",

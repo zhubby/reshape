@@ -306,6 +306,17 @@ fn startup_browser_loads_bundled_extension_build_when_available() {
     }
 }
 
+#[test]
+fn render_browser_uses_same_extension_set_as_startup_browser() {
+    let args = CliArgs::parse_from(["reshape", "--render-browser"]);
+
+    let render_options = args.render_browser_options();
+    let startup_options = args.startup_browser_options();
+
+    assert_eq!(render_options.session, startup_options.session);
+    assert_eq!(render_options.extensions, startup_options.extensions);
+}
+
 #[tokio::test]
 async fn startup_generates_default_index_when_workspace_is_empty() {
     let dir = tempfile::tempdir().unwrap();

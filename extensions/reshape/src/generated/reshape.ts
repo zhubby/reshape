@@ -20,6 +20,18 @@ export type ReshapeInputRequest = { jsonrpc: "2.0", id: string, method: "reshape
 
 export type RpcOutput = { "type": "final_message", text: string, } | { "type": "stream_chunk", text: string, } | { "type": "tool_progress", tool_name: string, message: string, } | { "type": "workspace_file_changed", path: string, } | { "type": "error", code: ErrorCode, message: string, } | { "type": "completed", summary: string, };
 
+export type TurnProgressKind = "turn_started" | "assistant_message" | "tool_started" | "tool_finished" | "tool_failed" | "turn_completed" | "turn_failed";
+
+export type TurnProgressEvent = { turnId: string, sequence: number, kind: TurnProgressKind, toolName: string | null, argumentsPreview: string | null, resultPreview: string | null, message: string, };
+
+export type RpcProgressNotification = { jsonrpc: "2.0", method: "reshape.progress", params: TurnProgressEvent, };
+
+export type RpcHistoryRole = "user" | "reshape" | "system";
+
+export type RpcHistoryMessage = { role: RpcHistoryRole, text: string, };
+
+export type RpcHistoryBody = { schemaVersion: "1.0", sessionKey: "local:main", messages: Array<RpcHistoryMessage>, };
+
 export type RpcErrorData = { errorCode: ErrorCode, };
 
 export type RpcErrorBody = { code: number, message: string, data: RpcErrorData | null, };

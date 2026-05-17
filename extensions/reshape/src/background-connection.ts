@@ -1,8 +1,11 @@
 import {
   connectAndHandshake,
+  fetchHistory,
   sendChatMessage,
   type ChatResult,
-  type ConnectionStatus
+  type ConnectionStatus,
+  type HistoryResult,
+  type ProgressCallback
 } from "./rpc"
 import type { TabContext } from "./protocol"
 
@@ -10,30 +13,37 @@ export type ConnectionSnapshot = {
   status: ConnectionStatus
   statusText: string
   address?: string
+  history?: HistoryResult
 }
 
 type ConnectFn = (address: string, tab: TabContext) => Promise<WebSocket>
+type HistoryFn = (socket: WebSocket) => Promise<HistoryResult>
 type SendFn = (
   socket: WebSocket,
   text: string,
-  tab: TabContext
+  tab: TabContext,
+  onProgress?: ProgressCallback
 ) => Promise<ChatResult>
 
 type RpcConnectionDeps = {
   connect?: ConnectFn
+  history?: HistoryFn
   send?: SendFn
 }
 
 export class RpcConnectionManager {
   private socket: WebSocket | null = null
   private status: ConnectionStatus = "idle"
-  private statusText = "尚未握手"
+  private statusText = "Handshake not started"
   private address?: string
+  private history?: HistoryResult
   private connectFn: ConnectFn
+  private historyFn: HistoryFn
   private sendFn: SendFn
 
   constructor(deps: RpcConnectionDeps = {}) {
     this.connectFn = deps.connect ?? connectAndHandshake
+    this.historyFn = deps.history ?? fetchHistory
     this.sendFn = deps.send ?? sendChatMessage
   }
 
@@ -41,7 +51,8 @@ export class RpcConnectionManager {
     return {
       status: this.status,
       statusText: this.statusText,
-      address: this.address
+      address: this.address,
+      history: this.history
     }
   }
 
@@ -51,7 +62,7 @@ export class RpcConnectionManager {
     }
 
     this.status = "connecting"
-    this.statusText = "正在连接 reshape RPC..."
+    this.statusText = "Connecting to reshape RPC..."
     this.address = address
     this.socket?.close()
 
@@ -59,33 +70,40 @@ export class RpcConnectionManager {
       const socket = await this.connectFn(address, tab)
       this.socket = socket
       this.status = "connected"
-      this.statusText = "已连接到 reshape RPC"
+      this.statusText = "Connected to reshape RPC"
+      this.history = await this.historyFn(socket).catch(() => ({ messages: [] }))
       socket.addEventListener("close", () => {
         if (this.socket === socket) {
           this.socket = null
           this.status = "idle"
-          this.statusText = "连接已关闭"
+          this.statusText = "Connection closed"
+          this.history = undefined
         }
       })
     } catch (error) {
       this.socket = null
       this.status = "error"
-      this.statusText = error instanceof Error ? error.message : "握手失败"
+      this.statusText = error instanceof Error ? error.message : "Handshake failed"
+      this.history = undefined
     }
 
     return this.snapshot()
   }
 
-  async send(text: string, tab: TabContext): Promise<ChatResult> {
+  async send(
+    text: string,
+    tab: TabContext,
+    onProgress?: ProgressCallback
+  ): Promise<ChatResult> {
     if (!this.socket || this.status !== "connected") {
-      throw new Error("reshape RPC 尚未连接")
+      throw new Error("reshape RPC is not connected")
     }
 
     try {
-      return await this.sendFn(this.socket, text, tab)
+      return await this.sendFn(this.socket, text, tab, onProgress)
     } catch (error) {
       this.status = "error"
-      this.statusText = error instanceof Error ? error.message : "发送失败"
+      this.statusText = error instanceof Error ? error.message : "Send failed"
       throw error
     }
   }
@@ -94,7 +112,8 @@ export class RpcConnectionManager {
     this.socket?.close()
     this.socket = null
     this.status = "idle"
-    this.statusText = "连接已关闭"
+    this.statusText = "Connection closed"
+    this.history = undefined
     return this.snapshot()
   }
 }

@@ -1,5 +1,5 @@
 import { RpcConnectionManager } from "./background-connection"
-import type { TabContext } from "./protocol"
+import type { TabContext, TurnProgressEvent } from "./protocol"
 
 type BackgroundMessage =
   | { type: "reshape.status" }
@@ -29,8 +29,21 @@ async function handleMessage(message: BackgroundMessage) {
     case "reshape.connect":
       return { status: await manager.connect(message.address, message.tab) }
     case "reshape.send":
-      return { result: await manager.send(message.text, message.tab), status: manager.snapshot() }
+      return {
+        result: await manager.send(message.text, message.tab, forwardProgress),
+        status: manager.snapshot()
+      }
     case "reshape.disconnect":
       return { status: manager.disconnect() }
   }
+}
+
+function forwardProgress(event: TurnProgressEvent) {
+  chrome.runtime.sendMessage(
+    {
+      type: "reshape.progress",
+      event
+    },
+    () => undefined
+  )
 }

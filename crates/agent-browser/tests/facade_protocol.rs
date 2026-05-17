@@ -3,7 +3,7 @@ use agent_browser::{BrowserOptions, BrowserSession};
 #[test]
 fn browser_session_builds_navigation_command_for_open_url() {
     let session = BrowserSession::new(BrowserOptions {
-        session: "reshape-main".to_string(),
+        session: "reshape-test-extension-drift".to_string(),
         allow_file_access: true,
         ..BrowserOptions::default()
     });
@@ -33,4 +33,15 @@ fn browser_session_builds_core_rendering_commands() {
 #[test]
 fn browser_options_default_has_no_extensions() {
     assert!(BrowserOptions::default().extensions.is_empty());
+}
+
+#[test]
+fn browser_session_restart_is_needed_when_extension_metadata_differs() {
+    let session = BrowserSession::new(BrowserOptions {
+        session: "reshape-test-extension-drift".to_string(),
+        extensions: vec!["/tmp/reshape-extension".to_string()],
+        ..BrowserOptions::default()
+    });
+
+    assert!(!session.daemon_matches_options_for_test());
 }

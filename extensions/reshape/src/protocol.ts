@@ -2,8 +2,13 @@ import type {
   RpcHandshake as GeneratedRpcHandshake,
   RpcHandshakeAck as GeneratedRpcHandshakeAck,
   ReshapeInputRequest as GeneratedReshapeInputRequest,
+  RpcHistoryBody as GeneratedRpcHistoryBody,
+  RpcHistoryMessage as GeneratedRpcHistoryMessage,
+  RpcProgressNotification as GeneratedRpcProgressNotification,
+  RpcResultBody as GeneratedRpcResultBody,
   RpcOutput as GeneratedRpcOutput,
-  RpcWireResponse
+  RpcWireResponse,
+  TurnProgressEvent as GeneratedTurnProgressEvent
 } from "./generated/reshape"
 
 export const RPC_PROTOCOL_VERSION = "1.0"
@@ -21,5 +26,10 @@ export type TabContext = {
 export type RpcHandshake = GeneratedRpcHandshake
 export type RpcHandshakeAck = GeneratedRpcHandshakeAck
 export type ReshapeInputRequest = GeneratedReshapeInputRequest
+export type RpcHistoryBody = GeneratedRpcHistoryBody
+export type RpcHistoryMessage = GeneratedRpcHistoryMessage
+export type RpcProgressNotification = GeneratedRpcProgressNotification
+export type RpcResultBody = GeneratedRpcResultBody
 export type RpcOutput = GeneratedRpcOutput
 export type RpcResponse = RpcWireResponse
+export type TurnProgressEvent = GeneratedTurnProgressEvent

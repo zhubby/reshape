@@ -4,7 +4,9 @@ use async_trait::async_trait;
 use reshape_core::error::Result;
 use reshape_core::llm::{ChatMessage, ChatOptions, LlmProvider, LlmResponse, ToolCall};
 use reshape_core::observability::NoopTelemetry;
-use reshape_core::protocol::{Envelope, InputEvent, InputSource, OutputEvent};
+use reshape_core::protocol::{
+    Envelope, InputEvent, InputSource, OutputEvent, TurnProgressEvent, TurnProgressKind,
+};
 use reshape_core::runtime::{AgentRuntime, RuntimeDeps, RuntimeLimits};
 use reshape_core::session::store::InMemorySessionStore;
 use reshape_core::tools::InMemoryToolRegistry;
@@ -81,6 +83,89 @@ async fn tool_loop_writes_file_then_completes() {
             .await
             .unwrap(),
         "<h1>Hello</h1>"
+    );
+}
+
+#[tokio::test]
+async fn tool_loop_reports_ordered_progress_events() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = Arc::new(LocalWorkspace::new(dir.path()).unwrap());
+    let provider = ScriptedLlmProvider::new([
+        LlmResponse {
+            content: "Writing page".to_string(),
+            tool_calls: vec![ToolCall {
+                id: "call-write".to_string(),
+                name: "write_file".to_string(),
+                arguments: serde_json::json!({
+                    "path": "index.html",
+                    "content": "<h1>Hello</h1>"
+                }),
+            }],
+        },
+        LlmResponse {
+            content: "Completing".to_string(),
+            tool_calls: vec![ToolCall {
+                id: "call-complete".to_string(),
+                name: "complete_task".to_string(),
+                arguments: serde_json::json!({
+                    "summary": "Created index.html"
+                }),
+            }],
+        },
+    ]);
+    let runtime = tool_runtime(provider, workspace);
+    let mut progress = Vec::<TurnProgressEvent>::new();
+
+    let output = runtime
+        .process_with_progress(
+            Envelope::new(InputEvent::UserText {
+                text: "create a page".to_string(),
+                source: InputSource::Test,
+            }),
+            |event| progress.push(event),
+        )
+        .await
+        .unwrap();
+
+    assert!(matches!(output.payload, OutputEvent::Completed { .. }));
+    assert_eq!(
+        progress
+            .iter()
+            .map(|event| event.kind.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            TurnProgressKind::TurnStarted,
+            TurnProgressKind::AssistantMessage,
+            TurnProgressKind::ToolStarted,
+            TurnProgressKind::ToolFinished,
+            TurnProgressKind::AssistantMessage,
+            TurnProgressKind::ToolStarted,
+            TurnProgressKind::ToolFinished,
+            TurnProgressKind::TurnCompleted,
+        ]
+    );
+    assert_eq!(progress[2].tool_name.as_deref(), Some("write_file"));
+    assert!(
+        progress[2]
+            .arguments_preview
+            .as_ref()
+            .unwrap()
+            .contains("index.html")
+    );
+    assert!(
+        progress[2]
+            .arguments_preview
+            .as_ref()
+            .unwrap()
+            .contains("<14 chars>")
+    );
+    assert_eq!(
+        progress[3].result_preview.as_deref(),
+        Some("wrote index.html")
+    );
+    assert_eq!(
+        progress[7].result_preview.as_deref(),
+        Some("Created index.html")
     );
 }
 

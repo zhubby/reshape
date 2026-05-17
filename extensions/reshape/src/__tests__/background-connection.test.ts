@@ -7,7 +7,8 @@ describe("RpcConnectionManager", () => {
     const socket = new EventTarget() as WebSocket
     socket.close = vi.fn()
     const connect = vi.fn().mockResolvedValue(socket)
-    const manager = new RpcConnectionManager({ connect })
+    const history = vi.fn().mockResolvedValue({ messages: [] })
+    const manager = new RpcConnectionManager({ connect, history })
 
     const connected = await manager.connect("127.0.0.1:7331", { id: 1 })
     const status = manager.snapshot()
@@ -15,13 +16,17 @@ describe("RpcConnectionManager", () => {
     expect(connected.status).toBe("connected")
     expect(status.status).toBe("connected")
     expect(connect).toHaveBeenCalledTimes(1)
+    expect(history).toHaveBeenCalledWith(socket)
   })
 
   it("reuses the existing socket when connecting to the same address", async () => {
     const socket = new EventTarget() as WebSocket
     socket.close = vi.fn()
     const connect = vi.fn().mockResolvedValue(socket)
-    const manager = new RpcConnectionManager({ connect })
+    const manager = new RpcConnectionManager({
+      connect,
+      history: vi.fn().mockResolvedValue({ messages: [] })
+    })
 
     await manager.connect("127.0.0.1:7331", { id: 1 })
     await manager.connect("127.0.0.1:7331", { id: 1 })
@@ -33,9 +38,14 @@ describe("RpcConnectionManager", () => {
   it("sends messages over the connected socket", async () => {
     const socket = new EventTarget() as WebSocket
     socket.close = vi.fn()
-    const send = vi.fn().mockResolvedValue({ id: "turn-1", text: "ok" })
+    const send = vi.fn().mockResolvedValue({
+      id: "turn-1",
+      text: "ok",
+      metadata: { changedFiles: ["index.html"] }
+    })
     const manager = new RpcConnectionManager({
       connect: vi.fn().mockResolvedValue(socket),
+      history: vi.fn().mockResolvedValue({ messages: [] }),
       send
     })
 
@@ -43,6 +53,62 @@ describe("RpcConnectionManager", () => {
     const result = await manager.send("create a page", { id: 1 })
 
     expect(result.text).toBe("ok")
-    expect(send).toHaveBeenCalledWith(socket, "create a page", { id: 1 })
+    expect(result.metadata).toEqual({ changedFiles: ["index.html"] })
+    expect(send).toHaveBeenCalledWith(socket, "create a page", { id: 1 }, undefined)
+  })
+
+  it("passes progress callbacks through to the rpc client", async () => {
+    const socket = new EventTarget() as WebSocket
+    socket.close = vi.fn()
+    const progress = vi.fn()
+    const send = vi.fn().mockResolvedValue({
+      id: "turn-1",
+      text: "ok",
+      activity: []
+    })
+    const manager = new RpcConnectionManager({
+      connect: vi.fn().mockResolvedValue(socket),
+      history: vi.fn().mockResolvedValue({ messages: [] }),
+      send
+    })
+
+    await manager.connect("127.0.0.1:7331", { id: 1 })
+    await manager.send("create a page", { id: 1 }, progress)
+
+    expect(send).toHaveBeenCalledWith(socket, "create a page", { id: 1 }, progress)
+  })
+
+  it("reports connection state in English", async () => {
+    const socket = new EventTarget() as WebSocket
+    socket.close = vi.fn()
+    const manager = new RpcConnectionManager({
+      connect: vi.fn().mockResolvedValue(socket),
+      history: vi.fn().mockResolvedValue({ messages: [] })
+    })
+
+    expect(manager.snapshot().statusText).toBe("Handshake not started")
+
+    const connected = await manager.connect("127.0.0.1:7331", { id: 1 })
+    expect(connected.statusText).toBe("Connected to reshape RPC")
+
+    const disconnected = manager.disconnect()
+    expect(disconnected.statusText).toBe("Connection closed")
+  })
+
+  it("exposes hydrated history after connecting", async () => {
+    const socket = new EventTarget() as WebSocket
+    socket.close = vi.fn()
+    const manager = new RpcConnectionManager({
+      connect: vi.fn().mockResolvedValue(socket),
+      history: vi.fn().mockResolvedValue({
+        messages: [{ role: "user", text: "previous prompt" }]
+      })
+    })
+
+    const connected = await manager.connect("127.0.0.1:7331", { id: 1 })
+
+    expect(connected.history?.messages).toEqual([
+      { role: "user", text: "previous prompt" }
+    ])
   })
 })

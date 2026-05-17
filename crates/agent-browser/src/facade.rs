@@ -1,10 +1,11 @@
+use std::fs;
 use std::thread;
 use std::time::Duration;
 
 use serde_json::{json, Value};
 
 use crate::commands::gen_id;
-use crate::connection::{cleanup_stale_files, send_command};
+use crate::connection::{cleanup_stale_files, get_socket_dir, send_command};
 
 pub type BrowserResponse = crate::connection::Response;
 
@@ -49,9 +50,25 @@ impl BrowserSession {
         &self.options
     }
 
+    #[doc(hidden)]
+    pub fn daemon_matches_options_for_test(&self) -> bool {
+        self.daemon_matches_options()
+    }
+
     pub fn ensure(&self) -> Result<(), BrowserError> {
         if self.daemon_ready() {
-            return Ok(());
+            if self.daemon_matches_options() {
+                return Ok(());
+            }
+
+            let _ = self.close();
+            for _ in 0..20 {
+                thread::sleep(Duration::from_millis(100));
+                if !self.daemon_ready() {
+                    break;
+                }
+            }
+            cleanup_stale_files(&self.options.session);
         }
 
         cleanup_stale_files(&self.options.session);
@@ -138,6 +155,24 @@ impl BrowserSession {
     fn daemon_ready(&self) -> bool {
         let command = json!({ "id": gen_id(), "action": "stream_status" });
         send_command(command, &self.options.session).is_ok()
+    }
+
+    fn daemon_matches_options(&self) -> bool {
+        self.running_extensions() == self.options.extensions
+    }
+
+    fn running_extensions(&self) -> Vec<String> {
+        let path = get_socket_dir().join(format!("{}.extensions", self.options.session));
+        fs::read_to_string(path)
+            .map(|content| {
+                content
+                    .split([',', '\n'])
+                    .map(str::trim)
+                    .filter(|path| !path.is_empty())
+                    .map(ToOwned::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     fn apply_daemon_environment(&self) {

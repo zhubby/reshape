@@ -215,6 +215,8 @@ fn build_chrome_args(options: &LaunchOptions) -> Result<ChromeArgs, String> {
     if let Some(ref exts) = options.extensions {
         if !exts.is_empty() {
             let ext_list = exts.join(",");
+            seed_extension_developer_mode(&user_data_dir)?;
+            args.push("--enable-unsafe-extension-debugging".to_string());
             args.push(format!("--load-extension={}", ext_list));
             args.push(format!("--disable-extensions-except={}", ext_list));
         }
@@ -247,22 +249,50 @@ fn build_chrome_args(options: &LaunchOptions) -> Result<ChromeArgs, String> {
     })
 }
 
-pub fn launch_chrome(options: &LaunchOptions) -> Result<ChromeProcess, String> {
-    let chrome_path = match &options.executable_path {
-        Some(p) => PathBuf::from(p),
-        None => find_chrome().ok_or_else(|| {
-            let cache_dir = crate::install::get_browsers_dir();
-            format!(
-                "Chrome not found. Checked:\n  \
-                 - agent-browser cache: {}\n  \
-                 - System Chrome installations\n  \
-                 - Puppeteer browser cache\n  \
-                 - Playwright browser cache\n\
-                 Run `agent-browser install` to download Chrome, or use --executable-path.",
-                cache_dir.display()
-            )
-        })?,
+fn seed_extension_developer_mode(user_data_dir: &Path) -> Result<(), String> {
+    let profile_dir = user_data_dir.join("Default");
+    std::fs::create_dir_all(&profile_dir)
+        .map_err(|e| format!("Failed to create Chrome profile directory: {}", e))?;
+    let preferences_path = profile_dir.join("Preferences");
+
+    let mut preferences = if preferences_path.is_file() {
+        let content = std::fs::read_to_string(&preferences_path)
+            .map_err(|e| format!("Failed to read Chrome preferences: {}", e))?;
+        serde_json::from_str::<serde_json::Value>(&content)
+            .unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
     };
+
+    preferences
+        .as_object_mut()
+        .ok_or_else(|| "Chrome preferences root is not an object".to_string())?
+        .entry("extensions")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or_else(|| "Chrome extensions preferences are not an object".to_string())?
+        .entry("ui")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or_else(|| "Chrome extension UI preferences are not an object".to_string())?
+        .insert("developer_mode".to_string(), serde_json::json!(true));
+
+    let content = serde_json::to_vec(&preferences)
+        .map_err(|e| format!("Failed to serialize Chrome preferences: {}", e))?;
+    std::fs::write(preferences_path, content)
+        .map_err(|e| format!("Failed to write Chrome preferences: {}", e))
+}
+
+pub fn launch_chrome(options: &LaunchOptions) -> Result<ChromeProcess, String> {
+    let chrome_path = chrome_path_for_launch(
+        options.executable_path.as_deref(),
+        options
+            .extensions
+            .as_ref()
+            .is_some_and(|extensions| !extensions.is_empty()),
+        crate::install::find_installed_chrome,
+        find_chrome,
+    )?;
 
     // Profile name preprocessing: if --profile is a Chrome profile name (not a
     // path), resolve it to a directory, copy the profile to a temp dir, and
@@ -328,6 +358,41 @@ pub fn launch_chrome(options: &LaunchOptions) -> Result<ChromeProcess, String> {
     }
 
     Err(last_err)
+}
+
+fn chrome_path_for_launch(
+    executable_path: Option<&str>,
+    has_extensions: bool,
+    find_installed_chrome: impl FnOnce() -> Option<PathBuf>,
+    find_any_chrome: impl FnOnce() -> Option<PathBuf>,
+) -> Result<PathBuf, String> {
+    if let Some(path) = executable_path {
+        return Ok(PathBuf::from(path));
+    }
+
+    if has_extensions {
+        return find_installed_chrome().ok_or_else(|| {
+            let cache_dir = crate::install::get_browsers_dir();
+            format!(
+                "Chrome for Testing is required to load unpacked extensions in automated Chrome sessions. \
+                 Run `agent-browser install` to install it into {}, or pass --executable-path.",
+                cache_dir.display()
+            )
+        });
+    }
+
+    find_any_chrome().ok_or_else(|| {
+        let cache_dir = crate::install::get_browsers_dir();
+        format!(
+            "Chrome not found. Checked:\n  \
+             - agent-browser cache: {}\n  \
+             - System Chrome installations\n  \
+             - Puppeteer browser cache\n  \
+             - Playwright browser cache\n\
+             Run `agent-browser install` to download Chrome, or use --executable-path.",
+            cache_dir.display()
+        )
+    })
 }
 
 fn try_launch_chrome(chrome_path: &Path, options: &LaunchOptions) -> Result<ChromeProcess, String> {
@@ -1502,6 +1567,72 @@ mod tests {
         if let Some(ref dir) = result.temp_user_data_dir {
             let _ = std::fs::remove_dir_all(dir);
         }
+    }
+
+    #[test]
+    fn test_build_args_with_extensions_enables_extension_debugging_ui() {
+        let opts = LaunchOptions {
+            extensions: Some(vec!["/tmp/my-ext".to_string()]),
+            ..Default::default()
+        };
+        let result = build_chrome_args(&opts).unwrap();
+
+        assert!(result
+            .args
+            .iter()
+            .any(|a| a == "--enable-unsafe-extension-debugging"));
+
+        let preferences =
+            std::fs::read_to_string(result.user_data_dir.join("Default/Preferences")).unwrap();
+        let preferences: serde_json::Value = serde_json::from_str(&preferences).unwrap();
+        assert_eq!(
+            preferences["extensions"]["ui"]["developer_mode"],
+            serde_json::Value::Bool(true)
+        );
+
+        if let Some(ref dir) = result.temp_user_data_dir {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[test]
+    fn test_chrome_for_extensions_requires_chrome_for_testing_cache() {
+        let result = chrome_path_for_launch(
+            None,
+            true,
+            || None,
+            || {
+                Some(PathBuf::from(
+                    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                ))
+            },
+        );
+
+        assert!(result.unwrap_err().contains("Chrome for Testing"));
+    }
+
+    #[test]
+    fn test_chrome_for_extensions_uses_installed_chrome_for_testing() {
+        let result = chrome_path_for_launch(
+            None,
+            true,
+            || {
+                Some(PathBuf::from(
+                    "/tmp/chrome-for-testing/Google Chrome for Testing",
+                ))
+            },
+            || {
+                Some(PathBuf::from(
+                    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                ))
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            result,
+            PathBuf::from("/tmp/chrome-for-testing/Google Chrome for Testing")
+        );
     }
 
     #[test]

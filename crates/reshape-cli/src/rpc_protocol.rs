@@ -2,8 +2,9 @@ use std::collections::BTreeMap;
 
 use reshape_core::protocol::{
     DEFAULT_SCHEMA_VERSION, DEFAULT_SESSION_KEY, Envelope, ErrorCode, InputEvent, InputSource,
-    OutputEvent,
+    OutputEvent, TurnProgressEvent, TurnProgressKind,
 };
+use reshape_core::session::{Session, SessionMessage};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::{Config, ExportError, TS};
@@ -154,6 +155,40 @@ pub struct RpcResultBody {
     pub output: RpcOutput,
     #[ts(type = "Record<string, unknown>")]
     pub metadata: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+pub struct RpcProgressNotification {
+    #[ts(type = "\"2.0\"")]
+    pub jsonrpc: &'static str,
+    #[ts(type = "\"reshape.progress\"")]
+    pub method: &'static str,
+    pub params: TurnProgressEvent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RpcHistoryBody {
+    #[serde(rename = "schemaVersion")]
+    #[ts(type = "\"1.0\"")]
+    pub schema_version: String,
+    #[ts(type = "\"local:main\"")]
+    pub session_key: String,
+    pub messages: Vec<RpcHistoryMessage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+pub struct RpcHistoryMessage {
+    pub role: RpcHistoryRole,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum RpcHistoryRole {
+    User,
+    Reshape,
+    System,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
@@ -339,6 +374,12 @@ pub fn export_ts_bindings(output: &std::path::Path) -> std::result::Result<(), E
     append_ts::<ReshapeInputParams>(&mut content);
     append_ts::<ReshapeInputRequest>(&mut content);
     append_ts::<RpcOutput>(&mut content);
+    append_ts::<TurnProgressKind>(&mut content);
+    append_ts::<TurnProgressEvent>(&mut content);
+    append_ts::<RpcProgressNotification>(&mut content);
+    append_ts::<RpcHistoryRole>(&mut content);
+    append_ts::<RpcHistoryMessage>(&mut content);
+    append_ts::<RpcHistoryBody>(&mut content);
     append_ts::<RpcErrorData>(&mut content);
     append_ts::<RpcErrorBody>(&mut content);
     append_ts::<RpcResultBody>(&mut content);
@@ -473,6 +514,21 @@ impl RpcResponse {
     }
 
     #[must_use]
+    pub fn history(id: impl Into<Value>, session: &Session) -> Self {
+        Self::raw_success(
+            id,
+            serde_json::to_value(RpcHistoryBody::from(session)).unwrap_or_else(|error| {
+                serde_json::json!({
+                    "schemaVersion": DEFAULT_SCHEMA_VERSION,
+                    "sessionKey": DEFAULT_SESSION_KEY,
+                    "messages": [],
+                    "serializationError": error.to_string(),
+                })
+            }),
+        )
+    }
+
+    #[must_use]
     pub fn error(id: Option<Value>, error: RpcError) -> Self {
         Self {
             jsonrpc: "2.0",
@@ -497,6 +553,56 @@ impl RpcResponse {
                 "schemaVersion": DEFAULT_SCHEMA_VERSION,
             }),
         )
+    }
+}
+
+impl RpcProgressNotification {
+    #[must_use]
+    pub fn new(params: TurnProgressEvent) -> Self {
+        Self {
+            jsonrpc: "2.0",
+            method: "reshape.progress",
+            params,
+        }
+    }
+}
+
+impl From<&Session> for RpcHistoryBody {
+    fn from(session: &Session) -> Self {
+        Self {
+            schema_version: DEFAULT_SCHEMA_VERSION.to_string(),
+            session_key: session.session_key.clone(),
+            messages: session
+                .history
+                .iter()
+                .filter_map(RpcHistoryMessage::from_session_message)
+                .collect(),
+        }
+    }
+}
+
+impl RpcHistoryMessage {
+    fn from_session_message(message: &SessionMessage) -> Option<Self> {
+        match message {
+            SessionMessage::Input(InputEvent::UserText { text, .. })
+            | SessionMessage::Input(InputEvent::PluginMessage { text }) => Some(Self {
+                role: RpcHistoryRole::User,
+                text: text.clone(),
+            }),
+            SessionMessage::Output(OutputEvent::FinalMessage { text }) => Some(Self {
+                role: RpcHistoryRole::Reshape,
+                text: text.clone(),
+            }),
+            SessionMessage::Output(OutputEvent::Completed { summary }) => Some(Self {
+                role: RpcHistoryRole::Reshape,
+                text: summary.clone(),
+            }),
+            SessionMessage::Output(OutputEvent::Error { message, .. }) => Some(Self {
+                role: RpcHistoryRole::System,
+                text: message.clone(),
+            }),
+            _ => None,
+        }
     }
 }
 

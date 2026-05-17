@@ -1,12 +1,15 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 
 import {
   DEFAULT_RPC_ADDRESS,
+  buildHistoryRequest,
   buildHandshakeFrame,
   buildInputRequest,
   isHandshakeAck,
   normalizeRpcAddress,
-  outputText
+  outputText,
+  resultText,
+  sendChatMessage
 } from "../rpc"
 
 describe("normalizeRpcAddress", () => {
@@ -81,6 +84,15 @@ describe("rpc protocol frames", () => {
       title: "Reshape"
     })
   })
+
+  it("builds reshape.history requests", () => {
+    expect(buildHistoryRequest("history-1")).toEqual({
+      jsonrpc: "2.0",
+      id: "history-1",
+      method: "reshape.history",
+      params: {}
+    })
+  })
 })
 
 describe("outputText", () => {
@@ -100,3 +112,122 @@ describe("outputText", () => {
     ).toBe("Done")
   })
 })
+
+describe("resultText", () => {
+  it("appends changed file feedback from rpc metadata", () => {
+    expect(
+      resultText({
+        output: {
+          type: "completed",
+          summary: "Page updated"
+        },
+        metadata: {
+          changedFiles: ["index.html", "assets/site.css"]
+        }
+      })
+    ).toBe("Page updated\nChanged files: index.html, assets/site.css")
+  })
+
+  it("ignores malformed changed file metadata", () => {
+    expect(
+      resultText({
+        output: {
+          type: "completed",
+          summary: "Page updated"
+        },
+        metadata: {
+          changedFiles: [1, "index.html"]
+        }
+      })
+    ).toBe("Page updated")
+  })
+})
+
+describe("sendChatMessage", () => {
+  it("reports progress notifications before resolving the final response", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(1)
+    const socket = new FakeSocket([
+      {
+        jsonrpc: "2.0",
+        method: "reshape.progress",
+        params: {
+          turnId: "turn-1",
+          sequence: 1,
+          kind: "tool_started",
+          toolName: "write_file",
+          argumentsPreview: "{\"path\":\"index.html\"}",
+          resultPreview: null,
+          message: "Running write_file"
+        }
+      },
+      {
+        jsonrpc: "2.0",
+        id: "turn-1",
+        result: {
+          schemaVersion: "1.0",
+          messageId: "message-1",
+          traceId: "trace-1",
+          sessionKey: "local:main",
+          output: {
+            type: "completed",
+            summary: "Done"
+          },
+          metadata: {
+            toolEvents: [
+              {
+                turnId: "turn-1",
+                sequence: 1,
+                kind: "tool_started",
+                toolName: "write_file",
+                argumentsPreview: "{\"path\":\"index.html\"}",
+                resultPreview: null,
+                message: "Running write_file"
+              }
+            ]
+          }
+        }
+      }
+    ])
+    const progress: unknown[] = []
+
+    const result = await sendChatMessage(
+      socket as unknown as WebSocket,
+      "create a page",
+      {},
+      (event) => progress.push(event)
+    )
+
+    expect(progress).toEqual([
+      {
+        turnId: "turn-1",
+        sequence: 1,
+        kind: "tool_started",
+        toolName: "write_file",
+        argumentsPreview: "{\"path\":\"index.html\"}",
+        resultPreview: null,
+        message: "Running write_file"
+      }
+    ])
+    expect(result.text).toBe("Done")
+    expect(result.activity).toEqual(progress)
+    vi.restoreAllMocks()
+  })
+})
+
+class FakeSocket extends EventTarget {
+  constructor(private readonly frames: unknown[]) {
+    super()
+  }
+
+  send() {
+    this.frames.forEach((frame) => {
+      queueMicrotask(() => {
+        this.dispatchEvent(
+          new MessageEvent("message", {
+            data: JSON.stringify(frame)
+          })
+        )
+      })
+    })
+  }
+}
