@@ -7,7 +7,8 @@ pub mod agent_browser;
 
 pub type Result<T> = std::result::Result<T, BrowserRenderError>;
 
-pub trait BrowserRenderer {
+pub trait BrowserRenderer: Send + Sync {
+    fn open_url(&self, url: &str) -> Result<()>;
     fn open_workspace_entry(&self, path: &Path) -> Result<()>;
     fn reload(&self) -> Result<()>;
     fn snapshot(&self) -> Result<()>;
@@ -69,8 +70,12 @@ impl Default for AgentBrowserRenderer<BrowserSession> {
 
 impl<C> BrowserRenderer for AgentBrowserRenderer<C>
 where
-    C: BrowserSessionClient,
+    C: BrowserSessionClient + Send + Sync,
 {
+    fn open_url(&self, url: &str) -> Result<()> {
+        self.session.open(url)
+    }
+
     fn open_workspace_entry(&self, path: &Path) -> Result<()> {
         let url = Self::workspace_entry_url(path)?;
         self.session.open(url.as_str())

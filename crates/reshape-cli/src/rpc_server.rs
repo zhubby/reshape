@@ -39,14 +39,25 @@ pub async fn serve_rpc_listener(
     let addr = listener.local_addr()?;
     log_server_listening(addr);
     let app = rpc_router(runtime, workspace_root.into().canonicalize()?);
-    axum::serve(listener, app).await.map_err(|error| {
-        tracing::error!(%error, "json-rpc websocket server stopped with error");
-        std::io::Error::other(error).into()
-    })
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "json-rpc websocket server stopped with error");
+            std::io::Error::other(error).into()
+        })
 }
 
 pub fn log_server_listening(addr: std::net::SocketAddr) {
     tracing::info!("json-rpc websocket server listening on {addr}");
+}
+
+async fn shutdown_signal() {
+    if let Err(error) = tokio::signal::ctrl_c().await {
+        tracing::warn!(%error, "failed to install Ctrl-C shutdown handler");
+        return;
+    }
+    tracing::info!("Ctrl-C received; shutting down json-rpc websocket server");
 }
 
 pub fn rpc_router(runtime: AgentRuntime, workspace_root: PathBuf) -> Router {

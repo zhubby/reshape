@@ -153,10 +153,11 @@ fn cli_rejects_non_loopback_server_host() {
 
 #[test]
 fn cli_config_defaults_to_openai_provider() {
+    let home = tempfile::tempdir().unwrap();
     let dir = tempfile::tempdir().unwrap();
     let args = CliArgs::parse_from(["reshape", "--workspace", dir.path().to_str().unwrap()]);
 
-    let config = args.into_config().unwrap();
+    let config = args.into_config_with_home(home.path()).unwrap();
 
     assert_eq!(config.llm.provider.as_str(), "openai");
     assert_eq!(config.llm.openai.model, "gpt-5.5");
@@ -253,6 +254,71 @@ fn completed_output_with_index_html_triggers_browser_render() {
 }
 
 #[test]
+fn startup_server_url_triggers_browser_open() {
+    let renderer = FakeBrowserRenderer::default();
+    let events = renderer.events.clone();
+    let server = reshape_cli::ServerConfig {
+        host: "127.0.0.1".to_string(),
+        port: 7331,
+    };
+
+    let warning = reshape_cli::open_startup_browser(Some(&renderer), &server);
+
+    assert!(warning.is_none());
+    assert_eq!(
+        events.lock().unwrap().as_slice(),
+        ["close", "open:http://127.0.0.1:7331/"]
+    );
+}
+
+#[test]
+fn startup_browser_defaults_to_visible_window() {
+    let args = CliArgs::parse_from(["reshape"]);
+
+    let options = args.startup_browser_options();
+
+    assert!(options.headed);
+}
+
+#[tokio::test]
+async fn startup_generates_default_index_when_workspace_is_empty() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let generated = reshape_cli::ensure_workspace_index_html(dir.path())
+        .await
+        .unwrap();
+
+    assert!(generated);
+    let html = tokio::fs::read_to_string(dir.path().join("index.html"))
+        .await
+        .unwrap();
+    assert!(html.contains("<title>Reshape"));
+    assert!(html.contains("LLM 动态生成 HTML"));
+    assert!(html.contains("workspace"));
+    assert!(html.contains("data-reshape-default-homepage"));
+}
+
+#[tokio::test]
+async fn startup_keeps_existing_workspace_index() {
+    let dir = tempfile::tempdir().unwrap();
+    tokio::fs::write(dir.path().join("index.html"), "<h1>custom</h1>")
+        .await
+        .unwrap();
+
+    let generated = reshape_cli::ensure_workspace_index_html(dir.path())
+        .await
+        .unwrap();
+
+    assert!(!generated);
+    assert_eq!(
+        tokio::fs::read_to_string(dir.path().join("index.html"))
+            .await
+            .unwrap(),
+        "<h1>custom</h1>"
+    );
+}
+
+#[test]
 fn non_completed_output_does_not_trigger_browser_render() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("index.html"), "<h1>CLI</h1>").unwrap();
@@ -273,9 +339,16 @@ fn non_completed_output_does_not_trigger_browser_render() {
 #[derive(Default)]
 struct FakeBrowserRenderer {
     opened: Arc<Mutex<Vec<String>>>,
+    events: Arc<Mutex<Vec<String>>>,
 }
 
 impl BrowserRenderer for FakeBrowserRenderer {
+    fn open_url(&self, url: &str) -> std::result::Result<(), BrowserRenderError> {
+        self.events.lock().unwrap().push(format!("open:{url}"));
+        self.opened.lock().unwrap().push(url.to_string());
+        Ok(())
+    }
+
     fn open_workspace_entry(&self, path: &Path) -> std::result::Result<(), BrowserRenderError> {
         self.opened
             .lock()
@@ -297,6 +370,7 @@ impl BrowserRenderer for FakeBrowserRenderer {
     }
 
     fn close(&self) -> std::result::Result<(), BrowserRenderError> {
+        self.events.lock().unwrap().push("close".to_string());
         Ok(())
     }
 }

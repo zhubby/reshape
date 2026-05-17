@@ -1,6 +1,7 @@
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand};
 use reshape_browser::agent_browser::{BrowserOptions, BrowserSession};
@@ -194,6 +195,23 @@ impl CliArgs {
         ))))
     }
 
+    pub fn startup_browser_renderer(&self) -> Box<dyn BrowserRenderer> {
+        Box::new(AgentBrowserRenderer::new(BrowserSession::new(
+            self.startup_browser_options(),
+        )))
+    }
+
+    #[must_use]
+    pub fn startup_browser_options(&self) -> BrowserOptions {
+        let options = self.agent_options();
+        BrowserOptions {
+            session: options.browser_session,
+            headed: true,
+            allow_file_access: true,
+            ..BrowserOptions::default()
+        }
+    }
+
     #[must_use]
     pub fn agent_options(&self) -> AgentOptions {
         match &self.command {
@@ -310,9 +328,28 @@ pub async fn run() -> Result<()> {
     let server_config = args.server_config_with_home(&home)?;
     let config = args.clone().into_config_with_home(&home)?;
     let workspace_root = config.workspace.root.clone();
+    if ensure_workspace_index_html(&workspace_root).await? {
+        tracing::info!(workspace = %workspace_root.display(), "generated default workspace index.html");
+    }
     let runtime = build_runtime(config)?;
     let listener = TcpListener::bind(server_config.bind_addr()?).await?;
+    spawn_startup_browser_open(args.startup_browser_renderer(), server_config.clone());
     rpc_server::serve_rpc_listener(listener, runtime, workspace_root).await
+}
+
+fn spawn_startup_browser_open(browser: Box<dyn BrowserRenderer>, server_config: ServerConfig) {
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        match tokio::task::spawn_blocking(move || {
+            open_startup_browser(Some(browser.as_ref()), &server_config)
+        })
+        .await
+        {
+            Ok(Some(warning)) => tracing::warn!("{warning}"),
+            Ok(None) => {}
+            Err(error) => tracing::warn!(%error, "browser startup open task failed"),
+        }
+    });
 }
 
 pub fn init_logging(log_level: &str) -> Result<()> {
@@ -422,6 +459,16 @@ impl ServerConfig {
         self.validate()?;
         Ok(SocketAddr::new(ip, self.port))
     }
+
+    #[must_use]
+    pub fn local_url(&self) -> String {
+        let host = if self.host.contains(':') {
+            format!("[{}]", self.host)
+        } else {
+            self.host.clone()
+        };
+        format!("http://{host}:{}/", self.port)
+    }
 }
 
 fn apply_llm_file_config(config: &mut AppConfig, file_llm: Option<FileLlmConfig>) -> Result<()> {
@@ -522,6 +569,43 @@ pub fn render_completed_output(
         .open_workspace_entry(&entry)
         .err()
         .map(|error| format!("browser render failed: {error}"))
+}
+
+pub async fn ensure_workspace_index_html(workspace_root: &Path) -> Result<bool> {
+    let index_path = workspace_root.join("index.html");
+    match tokio::fs::metadata(&index_path).await {
+        Ok(metadata) if metadata.is_file() => return Ok(false),
+        Ok(_) => {
+            return Err(ReshapeError::Config(format!(
+                "workspace index path exists but is not a file: {}",
+                index_path.display()
+            )));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+
+    tokio::fs::write(&index_path, default_workspace_index_html()).await?;
+    Ok(true)
+}
+
+#[must_use]
+pub fn default_workspace_index_html() -> &'static str {
+    include_str!("default_index.html")
+}
+
+pub fn open_startup_browser(
+    browser: Option<&dyn BrowserRenderer>,
+    server_config: &ServerConfig,
+) -> Option<String> {
+    let browser = browser?;
+    let url = server_config.local_url();
+    let _ = browser.close();
+    std::thread::sleep(Duration::from_millis(250));
+    browser
+        .open_url(&url)
+        .err()
+        .map(|error| format!("browser startup open failed: {error}"))
 }
 
 pub async fn process_ingress_once<I, B>(

@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="zh-CN" data-reshape-default-homepage>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reshape — LLM Dynamic HTML Workspace</title>
+<style>
+:root {
+  --bg: oklch(99% 0.002 240);
+  --surface: oklch(100% 0 0);
+  --fg: oklch(18% 0.012 250);
+  --muted: oklch(54% 0.012 250);
+  --border: oklch(92% 0.005 250);
+  --accent: oklch(58% 0.18 255);
+  --accent-soft: oklch(94% 0.035 255);
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  --fs-14: 14px;
+  --fs-16: 16px;
+  --fs-18: 18px;
+  --fs-24: 24px;
+  --fs-32: 32px;
+  --fs-40: 40px;
+  --fs-64: 64px;
+  --lh-body: 1.65;
+  --lh-heading: 1.15;
+  --measure: 720px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html {
+  font-size: var(--fs-16);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  min-height: 100vh;
+  font-family: var(--font-body);
+  background: var(--bg);
+  color: var(--fg);
+  line-height: var(--lh-body);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+
+.masthead {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 48px 24px 16px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+}
+
+.wordmark {
+  font-family: var(--font-display);
+  font-size: var(--fs-18);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.nav {
+  display: flex;
+  gap: 24px;
+  list-style: none;
+}
+
+.nav a {
+  font-family: var(--font-mono);
+  font-size: var(--fs-14);
+  color: var(--muted);
+  transition: color 150ms ease;
+}
+
+.nav a:hover {
+  color: var(--accent);
+}
+
+.article {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 0 24px;
+  animation: enter 520ms ease both;
+}
+
+.hero {
+  padding: 96px 0 56px;
+}
+
+.eyebrow {
+  margin-bottom: 16px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-14);
+  color: var(--accent);
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+}
+
+h1 {
+  max-width: 680px;
+  margin-bottom: 24px;
+  font-family: var(--font-display);
+  font-size: var(--fs-64);
+  font-weight: 720;
+  letter-spacing: -0.03em;
+  line-height: var(--lh-heading);
+  text-wrap: pretty;
+}
+
+.deck {
+  max-width: 560px;
+  font-size: var(--fs-18);
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.meta {
+  margin-top: 32px;
+  display: flex;
+  gap: 16px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-14);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.meta span + span::before {
+  content: "/";
+  margin-right: 16px;
+  color: var(--border);
+}
+
+.divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 48px 0;
+}
+
+.render-plane {
+  margin: 8px 0 56px;
+  padding: 24px;
+  background:
+    linear-gradient(90deg, var(--accent-soft) 1px, transparent 1px),
+    linear-gradient(180deg, var(--accent-soft) 1px, transparent 1px),
+    var(--surface);
+  background-size: 28px 28px;
+  border: 1px solid var(--border);
+}
+
+.render-plane pre {
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-14);
+  line-height: 1.8;
+  color: var(--fg);
+}
+
+.render-plane code {
+  white-space: pre;
+}
+
+.prose h2 {
+  margin: 64px 0 24px;
+  font-family: var(--font-display);
+  font-size: var(--fs-32);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: var(--lh-heading);
+}
+
+.prose p {
+  margin-bottom: 24px;
+  color: var(--fg);
+}
+
+.prose strong {
+  font-weight: 650;
+}
+
+.pull-quote {
+  margin: 48px 0;
+  padding: 24px 0 24px 24px;
+  border-inline-start: 3px solid var(--accent);
+  font-family: var(--font-display);
+  font-size: var(--fs-24);
+  font-weight: 560;
+  line-height: 1.4;
+  text-wrap: pretty;
+}
+
+.pull-quote-source {
+  display: block;
+  margin-top: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-14);
+  color: var(--muted);
+}
+
+.principles {
+  list-style: none;
+  counter-reset: principle;
+  margin: 48px 0;
+}
+
+.principles li {
+  counter-increment: principle;
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 16px;
+  align-items: baseline;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.principles li::before {
+  content: counter(principle, decimal-leading-zero);
+  font-family: var(--font-mono);
+  font-size: var(--fs-14);
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.principles li:last-child {
+  border-bottom: none;
+}
+
+.principle-title {
+  font-family: var(--font-display);
+  font-size: var(--fs-18);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.principle-body {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.inline-note {
+  margin: 48px 0;
+  padding: 32px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.site-footer {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 64px 24px 48px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.site-footer-copy,
+.site-footer a {
+  font-family: var(--font-mono);
+  font-size: var(--fs-14);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes enter {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 600px) {
+  .masthead {
+    flex-direction: column;
+    gap: 12px;
+    align-items: flex-start;
+  }
+
+  .nav {
+    gap: 16px;
+  }
+
+  .hero {
+    padding-top: 72px;
+  }
+
+  h1 {
+    font-size: var(--fs-40);
+  }
+
+  .meta {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .meta span + span::before {
+    content: "";
+    margin: 0;
+  }
+
+  .render-plane {
+    padding: 18px;
+  }
+
+  .site-footer {
+    flex-direction: column;
+    gap: 16px;
+  }
+}
+</style>
+</head>
+<body>
+<nav class="masthead" aria-label="Primary">
+  <a class="wordmark" href="/">Reshape</a>
+  <ul class="nav">
+    <li><a href="#model">模型</a></li>
+    <li><a href="#flow">流程</a></li>
+    <li><a href="#workspace">Workspace</a></li>
+  </ul>
+</nav>
+
+<main class="article">
+  <header class="hero">
+    <div class="eyebrow">001 — Local render surface</div>
+    <h1>LLM 动态生成 HTML，由浏览器即时渲染</h1>
+    <p class="deck">Reshape 把自然语言请求转成 workspace 里的文件变更，再通过本地 7331 静态服务呈现结果。这里是默认画布；当 agent 写入新的 index.html，它会让位给真实产物。</p>
+    <div class="meta">
+      <span>localhost:7331</span>
+      <span>single session</span>
+      <span>HTML / CSS / JS</span>
+    </div>
+  </header>
+
+  <section class="render-plane" aria-label="Render pipeline">
+<pre><code>user request
+  -> LLM tool loop
+  -> workspace/index.html
+  -> local static server
+  -> browser render</code></pre>
+  </section>
+
+  <hr class="divider">
+
+  <section class="prose" id="model">
+    <h2>项目的核心模型</h2>
+    <p>Reshape 不是把界面藏在后端状态里，而是把页面当作可以被模型直接编辑的文件。HTML、CSS、JavaScript 都落在同一个 workspace 中，浏览器只负责忠实呈现这些文件当前的样子。</p>
+    <p>这让每一次生成都保持可检查、可回滚、可继续修改。agent 不需要猜测页面状态；它读取文件、写入文件，然后由本地浏览器验证结果。</p>
+  </section>
+
+  <aside class="pull-quote">
+    Workspace 是源，浏览器是反馈面，LLM 是持续改写这个界面的操作者。
+    <span class="pull-quote-source">— Reshape runtime contract</span>
+  </aside>
+
+  <section class="prose" id="flow">
+    <h2>一次生成如何发生</h2>
+    <ol class="principles">
+      <li>
+        <div>
+          <div class="principle-title">输入变成一个本地 turn</div>
+          <div class="principle-body">CLI 或未来的浏览器入口把用户意图标准化为协议事件，交给固定的 local session。</div>
+        </div>
+      </li>
+      <li>
+        <div>
+          <div class="principle-title">模型选择文件工具</div>
+          <div class="principle-body">LLM 在预算限制内读取、写入、列出或删除 workspace 文件，直到页面足以完成当前任务。</div>
+        </div>
+      </li>
+      <li>
+        <div>
+          <div class="principle-title">静态服务暴露结果</div>
+          <div class="principle-body">7331 端口从 workspace 根目录提供资源，根路径默认映射到 index.html。</div>
+        </div>
+      </li>
+      <li>
+        <div>
+          <div class="principle-title">浏览器成为真实渲染器</div>
+          <div class="principle-body">生成结果不是截图或模拟预览，而是在本地浏览器中运行的页面。</div>
+        </div>
+      </li>
+    </ol>
+  </section>
+
+  <hr class="divider">
+
+  <section class="prose" id="workspace">
+    <h2>默认首页的边界</h2>
+    <p>这个页面只在 workspace 下没有 index.html 时自动生成。它的职责是让启动后的浏览器有一个清晰的第一屏，同时说明当前服务的渲染对象。</p>
+    <p>一旦 agent 根据请求创建页面，新的 index.html 会成为事实来源。Reshape 不会用默认首页覆盖已有文件，因为已有文件可能就是用户或模型正在工作的界面。</p>
+  </section>
+
+  <blockquote class="inline-note">
+    <p>本地静态首页是空 workspace 的起点，不是最终产品界面。真正的页面由后续 LLM turn 写入 workspace。</p>
+  </blockquote>
+</main>
+
+<footer class="site-footer">
+  <span class="site-footer-copy">© 2026 Reshape</span>
+  <a href="/">workspace/index.html</a>
+</footer>
+</body>
+</html>

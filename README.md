@@ -96,7 +96,16 @@ mkdir -p page
 cargo run -p reshape-cli -- --workspace ./page
 ```
 
-Then type a natural-language request into stdin.
+The CLI starts the local server and opens the default local URL in the browser
+automatically. If the workspace does not have `index.html` yet, Reshape writes a
+default static homepage so the browser has a clear starting surface. Then type a
+natural-language request into stdin; generated pages replace the default by
+writing `workspace/index.html`.
+
+Agent turns are prompted to produce HTML artifacts in the workspace rather than
+raw HTML in chat. `index.html` acts as the wiki-style hub: generated topic pages
+should live under `pages/`, shared assets under `assets/`, and each generated
+HTML page should be linked from the hub with relative links.
 
 The default provider is OpenAI Chat Completions. Put the API key directly in `~/.reshape/config.toml` as `llm.openai.api_key` before running an agent turn.
 

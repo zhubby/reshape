@@ -130,6 +130,7 @@ pub async fn run_daemon(session: &str) {
         stream_client,
         stream_server_instance,
         idle_timeout_ms,
+        !embedded_daemon,
     )
     .await;
 
@@ -161,6 +162,7 @@ async fn run_socket_server(
     stream_client: Option<Arc<RwLock<Option<Arc<CdpClient>>>>>,
     stream_server: Option<Arc<StreamServer>>,
     idle_timeout_ms: Option<u64>,
+    handle_process_signals: bool,
 ) -> Result<(), String> {
     use tokio::net::UnixListener;
 
@@ -246,7 +248,7 @@ async fn run_socket_server(
                 // so destructors fire.
                 break;
             }
-            _ = shutdown_signal() => {
+            _ = shutdown_signal(), if handle_process_signals => {
                 let mut s = state.lock().await;
                 if let Some(ref mut mgr) = s.browser {
                     let _ = mgr.close().await;
@@ -266,6 +268,7 @@ async fn run_socket_server(
     stream_client: Option<Arc<RwLock<Option<Arc<CdpClient>>>>>,
     stream_server: Option<Arc<StreamServer>>,
     idle_timeout_ms: Option<u64>,
+    handle_process_signals: bool,
 ) -> Result<(), String> {
     use tokio::net::TcpListener;
 
@@ -345,7 +348,7 @@ async fn run_socket_server(
                 let _ = fs::remove_file(&port_path);
                 break;
             }
-            _ = shutdown_signal() => {
+            _ = shutdown_signal(), if handle_process_signals => {
                 let mut s = state.lock().await;
                 if let Some(ref mut mgr) = s.browser {
                     let _ = mgr.close().await;
@@ -552,6 +555,22 @@ mod tests {
             "daemon.rs production code must not call waitpid(-1, ...). \
              Use Child::try_wait() via has_process_exited() instead. \
              See issue #1035."
+        );
+    }
+
+    #[test]
+    fn test_embedded_daemon_does_not_install_process_signal_handler() {
+        let source = include_str!("daemon.rs");
+        let production_code = source.split("#[cfg(test)]").next().unwrap_or(source);
+
+        assert!(
+            production_code.contains("!embedded_daemon"),
+            "embedded daemon must not install process-wide SIGINT handlers; \
+             the host CLI owns Ctrl-C shutdown"
+        );
+        assert!(
+            production_code.contains("if handle_process_signals"),
+            "socket server should gate shutdown_signal() behind host-provided signal ownership"
         );
     }
 
