@@ -205,12 +205,11 @@ async fn cli_runtime_builder_can_create_page_with_injected_provider() {
             summary: "CLI page created".to_string()
         }
     );
-    assert_eq!(
-        tokio::fs::read_to_string(dir.path().join("index.html"))
-            .await
-            .unwrap(),
-        "<h1>CLI</h1>"
-    );
+    let html = tokio::fs::read_to_string(dir.path().join("index.html"))
+        .await
+        .unwrap();
+    assert!(html.contains("<h1>CLI</h1>"));
+    assert!(html.contains(r#"href="assets/site.css""#));
 }
 
 #[tokio::test]

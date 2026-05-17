@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 
 use crate::error::Result;
 
+use super::html::normalize_html_write;
 use super::types::{Tool, ToolContext, ToolDefinition, ToolResult};
 
 #[derive(Debug, Clone, Copy)]
@@ -121,15 +122,17 @@ impl Tool for FileTool {
             }
             FileToolKind::Write => {
                 let args: WriteArgs = serde_json::from_value(args)?;
+                let content = match normalize_html_write(&args.path, &args.content) {
+                    Ok(Some(content)) => content,
+                    Ok(None) => args.content,
+                    Err(error) => return Ok(ToolResult::error(error.message().to_string())),
+                };
                 tracing::debug!(
                     path = %args.path,
-                    content_len = args.content.len(),
+                    content_len = content.len(),
                     "file tool writing workspace file"
                 );
-                let path = context
-                    .workspace
-                    .write_text(&args.path, &args.content)
-                    .await?;
+                let path = context.workspace.write_text(&args.path, &content).await?;
                 tracing::info!(path = %path.display(), "file tool wrote workspace file");
                 Ok(ToolResult::success(format!(
                     "wrote {}",

@@ -78,12 +78,11 @@ async fn tool_loop_writes_file_then_completes() {
             summary: "Created index.html".to_string()
         }
     );
-    assert_eq!(
-        tokio::fs::read_to_string(dir.path().join("index.html"))
-            .await
-            .unwrap(),
-        "<h1>Hello</h1>"
-    );
+    let html = tokio::fs::read_to_string(dir.path().join("index.html"))
+        .await
+        .unwrap();
+    assert!(html.contains("<h1>Hello</h1>"));
+    assert!(html.contains(r#"href="assets/site.css""#));
 }
 
 #[tokio::test]

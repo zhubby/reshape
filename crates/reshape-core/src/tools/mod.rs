@@ -1,5 +1,6 @@
 pub mod complete;
 pub mod file;
+mod html;
 pub mod registry;
 pub mod types;
 
