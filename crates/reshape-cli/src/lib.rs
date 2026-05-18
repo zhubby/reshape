@@ -31,11 +31,14 @@ pub mod rpc_server;
 #[derive(Debug, Clone, Parser, PartialEq, Eq)]
 #[command(name = "reshape")]
 #[command(about = "Local single-session agent runtime for AI-rendered pages")]
+#[command(
+    long_about = "Run a local single-session agent runtime for creating and rendering AI-generated pages."
+)]
 pub struct CliArgs {
     #[command(flatten)]
     agent: AgentOptions,
 
-    #[arg(long)]
+    #[arg(long, value_name = "LEVEL", help = "Tracing log level")]
     pub log_level: Option<String>,
 
     #[command(subcommand)]
@@ -44,28 +47,53 @@ pub struct CliArgs {
 
 #[derive(Debug, Clone, Args, Default, PartialEq, Eq)]
 pub struct AgentOptions {
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Path to the workspace directory the agent may read and modify"
+    )]
     pub workspace: Option<PathBuf>,
 
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Path to the TOML configuration file"
+    )]
     pub config: Option<PathBuf>,
 
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "MODEL",
+        help = "OpenAI chat model to use for agent responses"
+    )]
     pub model: Option<String>,
 
-    #[arg(long)]
+    #[arg(long, help = "Render completed agent output through agent-browser")]
     pub render_browser: bool,
 
-    #[arg(long, default_value = "reshape-main")]
+    #[arg(
+        long,
+        default_value = "reshape-main",
+        value_name = "SESSION",
+        help = "agent-browser session name used for rendering"
+    )]
     pub browser_session: String,
 
-    #[arg(long)]
+    #[arg(long, help = "Run the render browser in headed mode")]
     pub browser_headed: bool,
 
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "HOST",
+        help = "Host address for the JSON-RPC render server"
+    )]
     pub host: Option<String>,
 
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "PORT",
+        help = "Port for the JSON-RPC render server"
+    )]
     pub port: Option<u16>,
 }
 
@@ -85,8 +113,11 @@ pub enum CliCommand {
 
 #[derive(Debug, Clone, Subcommand, PartialEq, Eq)]
 enum CommandArgs {
+    #[command(about = "Run the local agent runtime and render server")]
     Agent(AgentOptions),
+    #[command(about = "Print the reshape CLI version")]
     Version,
+    #[command(about = "Manage the local page workspace")]
     Workspace(WorkspaceCommandArgs),
 }
 
@@ -98,7 +129,9 @@ struct WorkspaceCommandArgs {
 
 #[derive(Debug, Clone, Subcommand, PartialEq, Eq)]
 enum WorkspaceSubcommandArgs {
+    #[command(about = "Remove all generated files from the configured workspace")]
     Clean(AgentOptions),
+    #[command(about = "Create the configured workspace and default page files")]
     Init(AgentOptions),
 }
 
