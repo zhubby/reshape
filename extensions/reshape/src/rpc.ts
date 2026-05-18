@@ -109,6 +109,15 @@ export function buildHistoryRequest(id: string) {
   }
 }
 
+export function buildResetSessionRequest(id: string) {
+  return {
+    jsonrpc: "2.0",
+    id,
+    method: "reshape.reset_session",
+    params: {}
+  }
+}
+
 export function outputText(output: RpcOutput): string {
   switch (output.type) {
     case "final_message":
@@ -176,6 +185,22 @@ export async function sendChatMessage(
 export async function fetchHistory(socket: WebSocket): Promise<HistoryResult> {
   const id = `history-${Date.now()}`
   socket.send(JSON.stringify(buildHistoryRequest(id)))
+  const response = (await waitForJson(socket)) as
+    | { jsonrpc: "2.0"; id: string; result: RpcHistoryBody }
+    | { jsonrpc: "2.0"; id: string; error: { message: string } }
+
+  if ("error" in response) {
+    throw new Error(response.error.message)
+  }
+
+  return {
+    messages: response.result.messages
+  }
+}
+
+export async function resetSession(socket: WebSocket): Promise<HistoryResult> {
+  const id = `reset-${Date.now()}`
+  socket.send(JSON.stringify(buildResetSessionRequest(id)))
   const response = (await waitForJson(socket)) as
     | { jsonrpc: "2.0"; id: string; result: RpcHistoryBody }
     | { jsonrpc: "2.0"; id: string; error: { message: string } }

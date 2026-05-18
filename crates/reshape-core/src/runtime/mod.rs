@@ -41,6 +41,12 @@ impl AgentRuntime {
         self.deps.sessions.load().await
     }
 
+    pub async fn reset_session(&self) -> Result<Session> {
+        let session = Session::default();
+        self.deps.sessions.save(session.clone()).await?;
+        Ok(session)
+    }
+
     pub async fn process(&self, event: Envelope<InputEvent>) -> Result<Envelope<OutputEvent>> {
         self.process_with_optional_progress(event, None).await
     }

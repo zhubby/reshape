@@ -95,6 +95,37 @@ async fn consecutive_messages_increment_single_session_turns() {
 }
 
 #[tokio::test]
+async fn reset_session_clears_single_session_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let sessions = Arc::new(InMemorySessionStore::default());
+    let runtime = runtime(
+        ScriptedLlmProvider::new([LlmResponse {
+            content: "Done".to_string(),
+            tool_calls: Vec::new(),
+        }]),
+        InMemoryToolRegistry::new(),
+        Arc::new(LocalWorkspace::new(dir.path()).unwrap()),
+        sessions.clone(),
+    );
+
+    runtime
+        .process(Envelope::new(InputEvent::UserText {
+            text: "hello".to_string(),
+            source: InputSource::Test,
+        }))
+        .await
+        .unwrap();
+
+    let reset = runtime.reset_session().await.unwrap();
+
+    assert_eq!(reset, reshape_core::session::Session::default());
+    assert_eq!(
+        sessions.load().await.unwrap(),
+        reshape_core::session::Session::default()
+    );
+}
+
+#[tokio::test]
 async fn unknown_tool_error_is_reported_without_panic() {
     let dir = tempfile::tempdir().unwrap();
     let sessions = Arc::new(InMemorySessionStore::default());

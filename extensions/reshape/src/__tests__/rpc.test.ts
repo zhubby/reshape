@@ -5,10 +5,12 @@ import {
   buildHistoryRequest,
   buildHandshakeFrame,
   buildInputRequest,
+  buildResetSessionRequest,
   isHandshakeAck,
   normalizeRpcAddress,
   outputText,
   resultText,
+  resetSession,
   sendChatMessage
 } from "../rpc"
 
@@ -90,6 +92,15 @@ describe("rpc protocol frames", () => {
       jsonrpc: "2.0",
       id: "history-1",
       method: "reshape.history",
+      params: {}
+    })
+  })
+
+  it("builds reshape.reset_session requests", () => {
+    expect(buildResetSessionRequest("reset-1")).toEqual({
+      jsonrpc: "2.0",
+      id: "reset-1",
+      method: "reshape.reset_session",
       params: {}
     })
   })
@@ -210,6 +221,28 @@ describe("sendChatMessage", () => {
     ])
     expect(result.text).toBe("Done")
     expect(result.activity).toEqual(progress)
+    vi.restoreAllMocks()
+  })
+})
+
+describe("resetSession", () => {
+  it("returns the reset session history", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(2)
+    const socket = new FakeSocket([
+      {
+        jsonrpc: "2.0",
+        id: "reset-2",
+        result: {
+          schemaVersion: "1.0",
+          sessionKey: "local:main",
+          messages: []
+        }
+      }
+    ])
+
+    const result = await resetSession(socket as unknown as WebSocket)
+
+    expect(result.messages).toEqual([])
     vi.restoreAllMocks()
   })
 })

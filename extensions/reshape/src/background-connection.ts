@@ -1,6 +1,7 @@
 import {
   connectAndHandshake,
   fetchHistory,
+  resetSession,
   sendChatMessage,
   type ChatResult,
   type ConnectionStatus,
@@ -18,6 +19,7 @@ export type ConnectionSnapshot = {
 
 type ConnectFn = (address: string, tab: TabContext) => Promise<WebSocket>
 type HistoryFn = (socket: WebSocket) => Promise<HistoryResult>
+type ResetSessionFn = (socket: WebSocket) => Promise<HistoryResult>
 type SendFn = (
   socket: WebSocket,
   text: string,
@@ -28,6 +30,7 @@ type SendFn = (
 type RpcConnectionDeps = {
   connect?: ConnectFn
   history?: HistoryFn
+  resetSession?: ResetSessionFn
   send?: SendFn
 }
 
@@ -39,11 +42,13 @@ export class RpcConnectionManager {
   private history?: HistoryResult
   private connectFn: ConnectFn
   private historyFn: HistoryFn
+  private resetSessionFn: ResetSessionFn
   private sendFn: SendFn
 
   constructor(deps: RpcConnectionDeps = {}) {
     this.connectFn = deps.connect ?? connectAndHandshake
     this.historyFn = deps.history ?? fetchHistory
+    this.resetSessionFn = deps.resetSession ?? resetSession
     this.sendFn = deps.send ?? sendChatMessage
   }
 
@@ -70,7 +75,7 @@ export class RpcConnectionManager {
       const socket = await this.connectFn(address, tab)
       this.socket = socket
       this.status = "connected"
-      this.statusText = "Connected to reshape RPC"
+      this.statusText = ""
       this.history = await this.historyFn(socket).catch(() => ({ messages: [] }))
       socket.addEventListener("close", () => {
         if (this.socket === socket) {
@@ -104,6 +109,22 @@ export class RpcConnectionManager {
     } catch (error) {
       this.status = "error"
       this.statusText = error instanceof Error ? error.message : "Send failed"
+      throw error
+    }
+  }
+
+  async resetSession(): Promise<ConnectionSnapshot> {
+    if (!this.socket || this.status !== "connected") {
+      throw new Error("reshape RPC is not connected")
+    }
+
+    try {
+      this.history = await this.resetSessionFn(this.socket)
+      this.statusText = "Session reset"
+      return this.snapshot()
+    } catch (error) {
+      this.status = "error"
+      this.statusText = error instanceof Error ? error.message : "Reset failed"
       throw error
     }
   }

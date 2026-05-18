@@ -46,6 +46,7 @@ describe("RpcConnectionManager", () => {
     const manager = new RpcConnectionManager({
       connect: vi.fn().mockResolvedValue(socket),
       history: vi.fn().mockResolvedValue({ messages: [] }),
+      resetSession: vi.fn().mockResolvedValue({ messages: [] }),
       send
     })
 
@@ -89,7 +90,7 @@ describe("RpcConnectionManager", () => {
     expect(manager.snapshot().statusText).toBe("Handshake not started")
 
     const connected = await manager.connect("127.0.0.1:7331", { id: 1 })
-    expect(connected.statusText).toBe("Connected to reshape RPC")
+    expect(connected.statusText).toBe("")
 
     const disconnected = manager.disconnect()
     expect(disconnected.statusText).toBe("Connection closed")
@@ -110,5 +111,25 @@ describe("RpcConnectionManager", () => {
     expect(connected.history?.messages).toEqual([
       { role: "user", text: "previous prompt" }
     ])
+  })
+
+  it("resets the connected session and clears hydrated history", async () => {
+    const socket = new EventTarget() as WebSocket
+    socket.close = vi.fn()
+    const resetSession = vi.fn().mockResolvedValue({ messages: [] })
+    const manager = new RpcConnectionManager({
+      connect: vi.fn().mockResolvedValue(socket),
+      history: vi.fn().mockResolvedValue({
+        messages: [{ role: "user", text: "previous prompt" }]
+      }),
+      resetSession
+    })
+
+    await manager.connect("127.0.0.1:7331", { id: 1 })
+    const snapshot = await manager.resetSession()
+
+    expect(resetSession).toHaveBeenCalledWith(socket)
+    expect(snapshot.status).toBe("connected")
+    expect(snapshot.history?.messages).toEqual([])
   })
 })

@@ -137,6 +137,57 @@ Response:
 }
 ```
 
+### `reshape.history`
+
+Returns the current single-session chat history.
+
+Request:
+
+```json
+{"jsonrpc":"2.0","id":"history-1","method":"reshape.history","params":{}}
+```
+
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "history-1",
+  "result": {
+    "schemaVersion": "1.0",
+    "sessionKey": "local:main",
+    "messages": [
+      { "role": "user", "text": "create a page" },
+      { "role": "reshape", "text": "Updated index.html" }
+    ]
+  }
+}
+```
+
+### `reshape.reset_session`
+
+Clears the current single-session chat history without deleting workspace files.
+
+Request:
+
+```json
+{"jsonrpc":"2.0","id":"reset-1","method":"reshape.reset_session","params":{}}
+```
+
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "reset-1",
+  "result": {
+    "schemaVersion": "1.0",
+    "sessionKey": "local:main",
+    "messages": []
+  }
+}
+```
+
 ## Input Types
 
 ### `user_text`

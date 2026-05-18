@@ -4,6 +4,7 @@
 
 ### Added
 
+- `reshape.reset_session` JSON-RPC method and browser extension reset button for clearing the local session history.
 - `reshape workspace init` CLI command for creating the default workspace HTML and CSS without starting the server.
 - `reshape workspace clean` CLI command for removing all workspace contents while preserving the workspace root.
 - Optional `web_search` tool backed by Tavily, configured under `[tools.web_search]`.

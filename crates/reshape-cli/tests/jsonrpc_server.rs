@@ -411,6 +411,23 @@ async fn rpc_history_returns_messages_after_agent_turn() {
 }
 
 #[tokio::test]
+async fn rpc_reset_session_clears_history_after_agent_turn() {
+    let (addr, _workspace, task) = spawn_server().await;
+    let _turn = send_create_page_turn(addr).await;
+
+    let reset = send_reset_session_request(addr).await;
+    let history = send_history_request(addr).await;
+
+    assert_eq!(reset["jsonrpc"], "2.0");
+    assert_eq!(reset["id"], "reset-1");
+    assert_eq!(reset["result"]["schemaVersion"], "1.0");
+    assert_eq!(reset["result"]["sessionKey"], "local:main");
+    assert_eq!(reset["result"]["messages"].as_array().unwrap().len(), 0);
+    assert_eq!(history["result"]["messages"].as_array().unwrap().len(), 0);
+    task.abort();
+}
+
+#[tokio::test]
 async fn rpc_history_survives_runtime_restart_with_file_session_store() {
     let session_dir = tempfile::tempdir().unwrap();
     let session_path = session_dir.path().join("session.json");
@@ -426,6 +443,26 @@ async fn rpc_history_survives_runtime_restart_with_file_session_store() {
 
     assert_eq!(history["result"]["messages"][0]["text"], "create a page");
     assert_eq!(history["result"]["messages"][1]["text"], "RPC page created");
+    task.abort();
+}
+
+#[tokio::test]
+async fn rpc_reset_session_survives_runtime_restart_with_file_session_store() {
+    let session_dir = tempfile::tempdir().unwrap();
+    let session_path = session_dir.path().join("session.json");
+    let (addr, _workspace, task) =
+        spawn_server_with_file_session_store(scripted_page_provider(), session_path.clone()).await;
+    let _turn = send_create_page_turn(addr).await;
+    let reset = send_reset_session_request(addr).await;
+    task.abort();
+
+    let (addr, _workspace, task) =
+        spawn_server_with_file_session_store(Arc::new(ScriptedLlmProvider::new([])), session_path)
+            .await;
+    let history = send_history_request(addr).await;
+
+    assert_eq!(reset["result"]["messages"].as_array().unwrap().len(), 0);
+    assert_eq!(history["result"]["messages"].as_array().unwrap().len(), 0);
     task.abort();
 }
 
@@ -635,6 +672,22 @@ async fn send_history_request(addr: SocketAddr) -> Value {
     socket
         .send(Message::Text(
             r#"{"jsonrpc":"2.0","id":"history-1","method":"reshape.history","params":{}}"#.into(),
+        ))
+        .await
+        .unwrap();
+
+    next_json(&mut socket).await
+}
+
+async fn send_reset_session_request(addr: SocketAddr) -> Value {
+    let (mut socket, _) = connect_async(format!("ws://{addr}/v1/rpc")).await.unwrap();
+    send_handshake(&mut socket).await;
+    let _ack = next_json(&mut socket).await;
+
+    socket
+        .send(Message::Text(
+            r#"{"jsonrpc":"2.0","id":"reset-1","method":"reshape.reset_session","params":{}}"#
+                .into(),
         ))
         .await
         .unwrap();

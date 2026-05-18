@@ -49,6 +49,7 @@ struct AgentRequest {
 enum AgentRequestKind {
     Input(Box<Envelope<InputEvent>>),
     History,
+    ResetSession,
 }
 
 enum AgentResponse {
@@ -286,6 +287,40 @@ async fn handle_text_frame(
         };
     }
 
+    if request.method == "reshape.reset_session" {
+        tracing::debug!(id = %id, "queued json-rpc reset session request");
+        let (response_tx, response_rx) = oneshot::channel();
+        if state
+            .agent_tx
+            .send(AgentRequest {
+                kind: AgentRequestKind::ResetSession,
+                progress_tx: None,
+                response_tx,
+            })
+            .await
+            .is_err()
+        {
+            tracing::error!("agent worker queue is unavailable");
+            return Some(RpcResponse::error(
+                Some(id.clone()),
+                RpcError::server("agent worker is not available"),
+            ));
+        }
+
+        return match response_rx.await {
+            Ok(Ok(AgentResponse::History(result))) => Some(RpcResponse::raw_success(id, result)),
+            Ok(Ok(AgentResponse::Output(_))) => Some(RpcResponse::error(
+                Some(id),
+                RpcError::server("agent worker returned unexpected output response"),
+            )),
+            Ok(Err(error)) => Some(RpcResponse::error(Some(id.clone()), error)),
+            Err(error) => Some(RpcResponse::error(
+                Some(id),
+                RpcError::server(error.to_string()),
+            )),
+        };
+    }
+
     let envelope = match request.into_input_envelope() {
         Ok(envelope) => envelope,
         Err(error) => return Some(RpcResponse::error(Some(id), error)),
@@ -387,8 +422,26 @@ async fn run_agent_worker(
             continue;
         }
 
+        if matches!(request.kind, AgentRequestKind::ResetSession) {
+            let response = runtime
+                .reset_session()
+                .await
+                .map(|session| {
+                    AgentResponse::History(
+                        RpcResponse::history(serde_json::Value::Null, &session)
+                            .result
+                            .unwrap_or(serde_json::Value::Null),
+                    )
+                })
+                .map_err(|error| RpcError::server(error.to_string()));
+            if request.response_tx.send(response).is_err() {
+                tracing::warn!("json-rpc client dropped before reset response was delivered");
+            }
+            continue;
+        }
+
         let AgentRequestKind::Input(envelope) = request.kind else {
-            unreachable!("history requests are handled before input processing");
+            unreachable!("non-input requests are handled before input processing");
         };
         tracing::debug!(
             message_id = %envelope.header.message_id,

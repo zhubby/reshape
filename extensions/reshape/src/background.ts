@@ -5,6 +5,7 @@ type BackgroundMessage =
   | { type: "reshape.status" }
   | { type: "reshape.connect"; address: string; tab: TabContext }
   | { type: "reshape.send"; text: string; tab: TabContext }
+  | { type: "reshape.resetSession" }
   | { type: "reshape.disconnect" }
 
 const manager = new RpcConnectionManager()
@@ -33,6 +34,8 @@ async function handleMessage(message: BackgroundMessage) {
         result: await manager.send(message.text, message.tab, forwardProgress),
         status: manager.snapshot()
       }
+    case "reshape.resetSession":
+      return { status: await manager.resetSession() }
     case "reshape.disconnect":
       return { status: manager.disconnect() }
   }

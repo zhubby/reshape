@@ -28,18 +28,20 @@ type BackgroundResponse<T> =
       error: string
     }
 
+const INITIAL_MESSAGES: ChatMessage[] = [
+  {
+    role: "system",
+    text: "Set the reshape RPC address and complete the handshake to start chatting."
+  }
+]
+
 function IndexPopup() {
   const [rpcAddress, setRpcAddress] = useState("127.0.0.1:7331")
   const [status, setStatus] = useState<ConnectionStatus>("idle")
   const [statusText, setStatusText] = useState("Handshake not started")
   const [connectedAddress, setConnectedAddress] = useState<string | undefined>()
   const [input, setInput] = useState("")
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      role: "system",
-      text: "Set the reshape RPC address and complete the handshake to start chatting."
-    }
-  ])
+  const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES)
   const didAutoConnect = useRef(false)
   const effectiveStatus = effectiveConnectionStatus(status, rpcAddress, connectedAddress)
   const canChat = isConnectedToEditedAddress(status, rpcAddress, connectedAddress)
@@ -157,6 +159,23 @@ function IndexPopup() {
     }
   }
 
+  async function resetSession() {
+    if (!canChat) {
+      return
+    }
+
+    try {
+      const response = await sendBackground<{ status: BackgroundStatus }>({
+        type: "reshape.resetSession"
+      })
+      applyStatus(response.status)
+      setMessages(INITIAL_MESSAGES)
+    } catch (error) {
+      setStatus("error")
+      setStatusText(error instanceof Error ? error.message : "Reset failed")
+    }
+  }
+
   function handleConnectionAction() {
     if (canChat) {
       void disconnect()
@@ -221,7 +240,21 @@ function IndexPopup() {
     <main style={styles.shell}>
       <header style={styles.header}>
         <div>
-          <h1 style={styles.title}>Reshape</h1>
+          <div style={styles.titleRow}>
+            <h1 style={styles.title}>Reshape</h1>
+            <button
+              type="button"
+              aria-label="Reset session"
+              title="Reset session"
+              disabled={!canChat}
+              onClick={() => void resetSession()}
+              style={{
+                ...styles.iconButton,
+                ...(!canChat ? styles.iconButtonDisabled : {})
+              }}>
+              <ResetIcon />
+            </button>
+          </div>
           <p style={styles.subtitle}>Local RPC chat extension</p>
         </div>
         <span style={{ ...styles.badge, ...statusColor(effectiveStatus) }}>{statusLabel}</span>
@@ -243,7 +276,7 @@ function IndexPopup() {
             {actionLabel}
           </button>
         </div>
-        <p style={styles.statusText}>{statusText}</p>
+        {statusText ? <p style={styles.statusText}>{statusText}</p> : null}
       </section>
 
       <section style={styles.messages} aria-label="Chat messages">
@@ -276,6 +309,24 @@ function IndexPopup() {
         </button>
       </form>
     </main>
+  )
+}
+
+function ResetIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round">
+      <path d="M3 12a9 9 0 1 0 3-6.7" />
+      <path d="M3 4v6h6" />
+    </svg>
   )
 }
 
@@ -395,10 +446,33 @@ const styles = {
     alignItems: "flex-start",
     gap: 12
   } as React.CSSProperties,
+  titleRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8
+  } as React.CSSProperties,
   title: {
     margin: 0,
     fontSize: 24,
     lineHeight: 1.1
+  } as React.CSSProperties,
+  iconButton: {
+    width: 28,
+    height: 28,
+    border: "1px solid #d0d5dd",
+    borderRadius: 8,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "#ffffff",
+    color: "#344054",
+    cursor: "pointer",
+    padding: 0
+  } as React.CSSProperties,
+  iconButtonDisabled: {
+    color: "#98a2b3",
+    cursor: "not-allowed",
+    opacity: 0.65
   } as React.CSSProperties,
   subtitle: {
     margin: "6px 0 0",
