@@ -7,6 +7,8 @@ export type SelectionRect = {
 
 export type SelectionContext = {
   selectedText: string
+  filePath?: string
+  lineNumber?: number
   pageUrl?: string
   frameUrl?: string
   title?: string
@@ -20,6 +22,7 @@ export type SelectionContext = {
 
 export type CapturedSelectionDetails = {
   selectedText?: string
+  documentText?: string
   selectorHint?: string
   nearestHeading?: string
   nearestLink?: string
@@ -35,7 +38,11 @@ const NEARBY_TEXT_LIMIT = 1200
 const LABEL_TEXT_LIMIT = 72
 
 export function contextLabel(context: SelectionContext): string {
-  const source = context.title?.trim() || context.pageUrl?.trim() || "current page"
+  const source = context.filePath
+    ? context.lineNumber
+      ? `${context.filePath}:${context.lineNumber}`
+      : context.filePath
+    : context.title?.trim() || context.pageUrl?.trim() || "current page"
   return `Selection: ${source} · "${previewText(context.selectedText, LABEL_TEXT_LIMIT)}"`
 }
 
@@ -52,7 +59,9 @@ export function composePrompt(userInput: string, context: SelectionContext | nul
     "Browser selection context:",
     `- Title: ${context.title?.trim() || "Untitled"}`,
     `- URL: ${context.pageUrl?.trim() || "Unknown"}`,
-    `- Location: ${contextLocation(context)}`,
+    `- File: ${context.filePath || "Unknown"}`,
+    `- Line: ${context.lineNumber?.toString() || "Unknown"}`,
+    `- Element/Heading: ${contextLocation(context)}`,
     "- Selected text:",
     context.selectedText,
     "- Nearby context:",
@@ -76,10 +85,14 @@ export function contextFromMenuClick(
   const selected = details?.selectedText || info.selectionText || ""
   const [selectedText, selectedTruncated] = truncateText(selected, SELECTED_TEXT_LIMIT)
   const [nearbyText, nearbyTruncated] = truncateText(details?.nearbyText || "", NEARBY_TEXT_LIMIT)
+  const pageUrl = info.pageUrl || tab?.url
+  const filePath = workspacePathFromUrl(pageUrl)
 
   return {
     selectedText,
-    pageUrl: info.pageUrl || tab?.url,
+    filePath,
+    lineNumber: lineNumberForSelection(details?.documentText, selectedText),
+    pageUrl,
     frameUrl: info.frameUrl,
     title: tab?.title,
     selectorHint: details?.selectorHint,
@@ -103,15 +116,67 @@ export function captureSelectionDetails(): CapturedSelectionDetails {
   const nearestLink = closestText(element, "a")
   const selectorHint = element ? selectorPath(element) : undefined
   const nearbyText = nearbyVisibleText(element)
+  const documentText = document.body.innerText || document.body.textContent || ""
 
   return {
     selectedText,
+    documentText,
     selectorHint,
     nearestHeading,
     nearestLink,
     nearbyText,
     rect
   }
+}
+
+export function workspacePathFromUrl(url: string | undefined): string | undefined {
+  if (!url) {
+    return undefined
+  }
+  try {
+    const parsed = new URL(url)
+    const path = decodeURIComponent(parsed.pathname)
+      .replace(/^\/+/, "")
+      .replace(/\/+$/, "")
+    if (!path) {
+      return "index.html"
+    }
+    if (path.endsWith(".html") || path.endsWith(".htm")) {
+      return path
+    }
+    return `${path}/index.html`
+  } catch {
+    return undefined
+  }
+}
+
+export function lineNumberForSelection(
+  documentText: string | undefined,
+  selectedText: string
+): number | undefined {
+  const needle = selectedText.replace(/\s+/g, " ").trim()
+  if (!documentText || !needle) {
+    return undefined
+  }
+
+  let offset = 0
+  for (const [index, line] of documentText.split(/\r?\n/).entries()) {
+    const normalizedLine = line.replace(/\s+/g, " ").trim()
+    if (normalizedLine.includes(needle)) {
+      return index + 1
+    }
+    if (needle.includes(normalizedLine) && normalizedLine.length > 0) {
+      return index + 1
+    }
+    offset += line.length + 1
+  }
+
+  const normalizedDocument = documentText.replace(/\s+/g, " ")
+  const matchOffset = normalizedDocument.indexOf(needle)
+  if (matchOffset === -1) {
+    return undefined
+  }
+  return documentText.slice(0, Math.min(offset, matchOffset)).split(/\r?\n/).length
 }
 
 function contextLocation(context: SelectionContext): string {

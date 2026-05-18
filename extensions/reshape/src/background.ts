@@ -18,6 +18,7 @@ type BackgroundMessage =
   | { type: "reshape.send"; text: string; tab: TabContext }
   | { type: "reshape.resetSession" }
   | { type: "reshape.clearPendingContext" }
+  | { type: "reshape.setPendingContext"; context: SelectionContext }
   | { type: "reshape.disconnect" }
 
 export const SELECTION_CONTEXT_MENU_ID = "reshape-capture-selection"
@@ -55,6 +56,9 @@ async function handleMessage(message: BackgroundMessage) {
     case "reshape.clearPendingContext":
       await clearPendingContext()
       return { pendingContext: null }
+    case "reshape.setPendingContext":
+      await setPendingContext(message.context)
+      return { pendingContext: message.context }
     case "reshape.disconnect":
       return { status: manager.disconnect() }
   }

@@ -214,6 +214,76 @@ async fn websocket_input_reports_tool_failure_progress_before_error_response() {
 }
 
 #[tokio::test]
+async fn websocket_stays_open_after_provider_error_response() {
+    let provider = Arc::new(ProviderErrorThenResponse::new(LlmResponse {
+        content: "Done".to_string(),
+        tool_calls: vec![ToolCall {
+            id: "complete".to_string(),
+            name: "complete_task".to_string(),
+            arguments: serde_json::json!({"summary": "Recovered on same socket"}),
+        }],
+    }));
+    let (addr, _workspace, task) = spawn_server_with_provider(provider).await;
+    let (mut socket, _) = connect_async(format!("ws://{addr}/v1/rpc")).await.unwrap();
+    send_handshake(&mut socket).await;
+    let _ack = next_json(&mut socket).await;
+
+    socket
+        .send(Message::Text(
+            r#"{
+                "jsonrpc": "2.0",
+                "id": "turn-fail",
+                "method": "reshape.input",
+                "params": {
+                    "input": {
+                        "type": "user_text",
+                        "text": "fail once"
+                    }
+                }
+            }"#
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let failed = next_response(&mut socket, "turn-fail").await;
+    assert_eq!(failed["error"]["code"], -32000);
+    assert!(
+        failed["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("provider exploded")
+    );
+
+    socket
+        .send(Message::Text(
+            r#"{
+                "jsonrpc": "2.0",
+                "id": "turn-recover",
+                "method": "reshape.input",
+                "params": {
+                    "input": {
+                        "type": "user_text",
+                        "text": "try again"
+                    }
+                }
+            }"#
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let recovered = next_response(&mut socket, "turn-recover").await;
+
+    assert_eq!(recovered["jsonrpc"], "2.0");
+    assert_eq!(recovered["id"], "turn-recover");
+    assert_eq!(recovered["result"]["output"]["type"], "completed");
+    assert_eq!(
+        recovered["result"]["output"]["summary"],
+        "Recovered on same socket"
+    );
+    task.abort();
+}
+
+#[tokio::test]
 async fn completed_rpc_turn_refreshes_browser_preview() {
     let renderer = Arc::new(FakeBrowserRenderer::default());
     let events = renderer.events.clone();
@@ -786,6 +856,12 @@ struct ScriptedLlmProvider {
     responses: Mutex<std::collections::VecDeque<LlmResponse>>,
 }
 
+#[derive(Debug)]
+struct ProviderErrorThenResponse {
+    response: Mutex<Option<LlmResponse>>,
+    has_failed: Mutex<bool>,
+}
+
 #[derive(Default)]
 struct FakeBrowserRenderer {
     events: Arc<StdMutex<Vec<String>>>,
@@ -862,6 +938,15 @@ impl ScriptedLlmProvider {
     }
 }
 
+impl ProviderErrorThenResponse {
+    fn new(response: LlmResponse) -> Self {
+        Self {
+            response: Mutex::new(Some(response)),
+            has_failed: Mutex::new(false),
+        }
+    }
+}
+
 #[async_trait]
 impl LlmProvider for ScriptedLlmProvider {
     fn name(&self) -> &str {
@@ -879,6 +964,38 @@ impl LlmProvider for ScriptedLlmProvider {
         _options: ChatOptions,
     ) -> Result<LlmResponse> {
         self.responses.lock().await.pop_front().ok_or_else(|| {
+            reshape_core::error::ReshapeError::Provider("no scripted response".to_string())
+        })
+    }
+}
+
+#[async_trait]
+impl LlmProvider for ProviderErrorThenResponse {
+    fn name(&self) -> &str {
+        "provider-error-then-response"
+    }
+
+    fn default_model(&self) -> &str {
+        "scripted-model"
+    }
+
+    async fn chat(
+        &self,
+        _messages: Vec<ChatMessage>,
+        _tools: Vec<reshape_core::tools::types::ToolDefinition>,
+        _options: ChatOptions,
+    ) -> Result<LlmResponse> {
+        let mut has_failed = self.has_failed.lock().await;
+        if !*has_failed {
+            *has_failed = true;
+            return Err(reshape_core::error::ReshapeError::Provider(
+                "provider exploded".to_string(),
+            ));
+        }
+        drop(has_failed);
+
+        let mut response = self.response.lock().await;
+        response.take().ok_or_else(|| {
             reshape_core::error::ReshapeError::Provider("no scripted response".to_string())
         })
     }

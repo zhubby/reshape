@@ -6,7 +6,8 @@ import {
   type ChatResult,
   type ConnectionStatus,
   type HistoryResult,
-  type ProgressCallback
+  type ProgressCallback,
+  RpcResponseError
 } from "./rpc"
 import type { TabContext } from "./protocol"
 
@@ -107,6 +108,10 @@ export class RpcConnectionManager {
     try {
       return await this.sendFn(this.socket, text, tab, onProgress)
     } catch (error) {
+      if (error instanceof RpcResponseError) {
+        this.statusText = error.message
+        throw error
+      }
       this.status = "error"
       this.statusText = error instanceof Error ? error.message : "Send failed"
       throw error

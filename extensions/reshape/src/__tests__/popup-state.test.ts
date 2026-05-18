@@ -14,6 +14,11 @@ import {
   resolveThemeMode,
   userBubbleText
 } from "../popup-state"
+import {
+  contextFromMenuClick,
+  lineNumberForSelection,
+  workspacePathFromUrl
+} from "../selection-context"
 
 describe("popup connection state", () => {
   it("shows stop only when the edited address is already connected", () => {
@@ -119,16 +124,20 @@ describe("popup connection state", () => {
       contextLabel({
         title: "Product notes",
         pageUrl: "https://example.test/notes",
+        filePath: "pages/product-notes.html",
+        lineNumber: 12,
         selectedText: "Selected text from the current document"
       })
-    ).toBe('Selection: Product notes · "Selected text from the current document"')
+    ).toBe('Selection: pages/product-notes.html:12 · "Selected text from the current document"')
   })
 
   it("combines user intent with pending browser selection context for the llm", () => {
     expect(
       composePrompt("Fold this into the docs", {
         title: "Product notes",
-        pageUrl: "https://example.test/notes",
+        pageUrl: "http://127.0.0.1:7331/pages/product-notes.html",
+        filePath: "pages/product-notes.html",
+        lineNumber: 4,
         nearestHeading: "Roadmap",
         selectedText: "Launch the beta in June.",
         nearbyText: "Roadmap Launch the beta in June. Follow up with GA."
@@ -138,8 +147,10 @@ Fold this into the docs
 
 Browser selection context:
 - Title: Product notes
-- URL: https://example.test/notes
-- Location: Roadmap
+- URL: http://127.0.0.1:7331/pages/product-notes.html
+- File: pages/product-notes.html
+- Line: 4
+- Element/Heading: Roadmap
 - Selected text:
 Launch the beta in June.
 - Nearby context:
@@ -150,11 +161,53 @@ Roadmap Launch the beta in June. Follow up with GA.`)
     expect(
       userBubbleText("", {
         title: "Product notes",
+        filePath: "pages/product-notes.html",
         selectedText: "Launch the beta in June."
       })
     ).toBe(
-      'Use this browser selection to improve the wiki tree and related pages.\nSelection: Product notes · "Launch the beta in June."'
+      'Use this browser selection to improve the wiki tree and related pages.\nSelection: pages/product-notes.html · "Launch the beta in June."'
     )
+  })
+
+  it("maps local render urls to workspace-relative files", () => {
+    expect(workspacePathFromUrl("http://127.0.0.1:7331/")).toBe("index.html")
+    expect(workspacePathFromUrl("http://127.0.0.1:7331/pages/topic.html")).toBe(
+      "pages/topic.html"
+    )
+    expect(workspacePathFromUrl("http://127.0.0.1:7331/docs")).toBe(
+      "docs/index.html"
+    )
+  })
+
+  it("finds a best-effort line number for selected text", () => {
+    expect(
+      lineNumberForSelection(
+        "Intro\nRoadmap\nLaunch the beta in June.\nFollow up with GA.",
+        "Launch the beta in June."
+      )
+    ).toBe(3)
+  })
+
+  it("derives file and line context from a context menu capture", () => {
+    expect(
+      contextFromMenuClick(
+        {
+          menuItemId: "reshape-capture-selection",
+          selectionText: "Launch the beta in June.",
+          pageUrl: "http://127.0.0.1:7331/pages/product-notes.html"
+        } as chrome.contextMenus.OnClickData,
+        { title: "Product notes" } as chrome.tabs.Tab,
+        {
+          documentText: "Intro\nLaunch the beta in June.",
+          nearestHeading: "Roadmap",
+          selectedText: "Launch the beta in June."
+        }
+      )
+    ).toMatchObject({
+      filePath: "pages/product-notes.html",
+      lineNumber: 2,
+      nearestHeading: "Roadmap"
+    })
   })
 })
 

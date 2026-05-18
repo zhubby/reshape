@@ -65,7 +65,7 @@ function IndexPopup() {
     rpcAddress,
     connectedAddress
   })
-  const styles = useMemo(() => createStyles(resolvedTheme), [resolvedTheme])
+  const themeVars = useMemo(() => themeStyleVariables(resolvedTheme), [resolvedTheme])
 
   useEffect(() => {
     void initializeConnection()
@@ -250,6 +250,7 @@ function IndexPopup() {
   }
 
   async function sendMessage() {
+    const contextToSend = pendingContext
     const text = composePrompt(input, pendingContext)
     const bubbleText = userBubbleText(input, pendingContext)
     if (!bubbleText || !canChat) {
@@ -257,6 +258,12 @@ function IndexPopup() {
     }
 
     setInput("")
+    if (contextToSend) {
+      setPendingContext(null)
+      await sendBackground<{ pendingContext: null }>({
+        type: "reshape.clearPendingContext"
+      }).catch(() => undefined)
+    }
     setStatusText("Agent is working...")
     setMessages((current) => [
       ...current,
@@ -283,42 +290,44 @@ function IndexPopup() {
         )
       }
       setMessages((current) => completeWorkingMessage(current, result))
-      if (pendingContext) {
-        setPendingContext(null)
-        await sendBackground<{ pendingContext: null }>({
-          type: "reshape.clearPendingContext"
-        }).catch(() => undefined)
-      }
     } catch (error) {
       const errorText = error instanceof Error ? error.message : "Send failed"
+      if (contextToSend && shouldRestorePendingContext(errorText)) {
+        setPendingContext(contextToSend)
+        await sendBackground<{ pendingContext: SelectionContext }>({
+          type: "reshape.setPendingContext",
+          context: contextToSend
+        }).catch(() => undefined)
+      }
       setMessages((current) => failWorkingMessage(current, errorText))
-      setStatus("error")
+      if (shouldRestorePendingContext(errorText)) {
+        setStatus("error")
+      }
       setStatusText(errorText)
     }
   }
 
   return (
-    <main style={styles.shell}>
-      <header style={styles.header}>
-        <div style={styles.titleRow}>
-          <h1 style={styles.title}>Reshape</h1>
+    <main className="reshape-shell" data-theme={resolvedTheme} style={themeVars}>
+      <style>{popupStyles}</style>
+      <header className="reshape-header">
+        <div className="reshape-title-row">
+          <h1 className="reshape-title">Reshape</h1>
           <span
             aria-label={`RPC status: ${effectiveStatus}`}
             title={`RPC status: ${effectiveStatus}`}
-            style={{ ...styles.statusDot, ...statusDotStyle(effectiveStatus) }}
+            className="reshape-status-dot"
+            data-status={effectiveStatus}
           />
         </div>
-        <div style={styles.toolbar}>
+        <div className="reshape-toolbar">
           <button
             type="button"
             aria-label="Reset session"
             title="Reset session"
             disabled={!canChat}
             onClick={() => void resetSession()}
-            style={{
-              ...styles.iconButton,
-              ...(!canChat ? styles.iconButtonDisabled : {})
-            }}>
+            className="reshape-button reshape-button-icon">
             <RotateCcw aria-hidden="true" size={16} strokeWidth={2} />
           </button>
           <button
@@ -326,30 +335,30 @@ function IndexPopup() {
             aria-label={`Theme: ${themeMode}`}
             title={`Theme: ${themeMode}`}
             onClick={toggleThemeMode}
-            style={styles.iconButton}>
+            className="reshape-button reshape-button-icon">
             {themeIcon(themeMode)}
           </button>
         </div>
       </header>
 
-      <section style={styles.fieldGroup}>
-        <label style={styles.label} htmlFor="rpc-address">
+      <section className="reshape-field-group">
+        <label className="reshape-label" htmlFor="rpc-address">
           RPC address
         </label>
-        <div style={styles.addressRow}>
+        <div className="reshape-address-row">
           <input
             id="rpc-address"
             value={rpcAddress}
             onChange={(event) => handleAddressChange(event.currentTarget.value)}
             placeholder="127.0.0.1:7331"
-            style={styles.input}
+            className="reshape-input"
           />
           <button
             type="button"
             aria-label={actionLabel}
             title={actionLabel}
             onClick={handleConnectionAction}
-            style={styles.iconButton}>
+            className="reshape-button reshape-button-square reshape-button-accent">
             {canChat ? (
               <Unplug aria-hidden="true" size={16} strokeWidth={2} />
             ) : (
@@ -357,33 +366,35 @@ function IndexPopup() {
             )}
           </button>
         </div>
-        {statusText ? <p style={styles.statusText}>{statusText}</p> : null}
+        {statusText ? <p className="reshape-status-text">{statusText}</p> : null}
       </section>
 
-      <section style={styles.messages} aria-label="Chat messages">
+      <section className="reshape-messages" aria-label="Chat messages">
         {messages.map((message, index) => (
-          <article key={`${message.role}-${index}`} style={messageStyle(styles, message.role)}>
+          <article
+            key={`${message.role}-${index}`}
+            className={messageClassName(message.role)}>
             <div>{message.text}</div>
           </article>
         ))}
       </section>
 
       <form
-        style={styles.chatForm}
+        className="reshape-chat-form"
         onSubmit={(event) => {
           event.preventDefault()
           void sendMessage()
         }}>
-        <div style={styles.composer}>
+        <div className="reshape-composer">
           {pendingContext ? (
-            <div style={styles.contextChip}>
-              <span style={styles.contextChipText}>{contextLabel(pendingContext)}</span>
+            <div className="reshape-context-chip">
+              <span className="reshape-context-chip-text">{contextLabel(pendingContext)}</span>
               <button
                 type="button"
                 aria-label="Remove captured selection"
                 title="Remove captured selection"
                 onClick={() => void clearPendingContext()}
-                style={styles.contextChipRemove}>
+                className="reshape-button reshape-button-chip-remove">
                 <X aria-hidden="true" size={13} strokeWidth={2} />
               </button>
             </div>
@@ -399,7 +410,7 @@ function IndexPopup() {
                   : "Tell reshape what to do..."
                 : "Handshake first"
             }
-            style={styles.input}
+            className="reshape-input"
           />
         </div>
         <button
@@ -407,12 +418,7 @@ function IndexPopup() {
           aria-label="Send"
           title="Send"
           disabled={!canChat || (input.trim().length === 0 && !pendingContext)}
-          style={{
-            ...styles.iconButton,
-            ...(!canChat || (input.trim().length === 0 && !pendingContext)
-              ? styles.iconButtonDisabled
-              : {})
-          }}>
+          className="reshape-button reshape-button-square reshape-button-primary">
           <Send aria-hidden="true" size={16} strokeWidth={2} />
         </button>
       </form>
@@ -425,6 +431,11 @@ function IndexPopup() {
       type: "reshape.clearPendingContext"
     }).catch(() => undefined)
   }
+}
+
+function shouldRestorePendingContext(errorText: string): boolean {
+  const normalized = errorText.toLowerCase()
+  return normalized.includes("websocket") || normalized.includes("not connected")
 }
 
 function sendBackground<T>(message: Record<string, unknown>): Promise<T> {
@@ -528,10 +539,10 @@ function createStyles(theme: ResolvedTheme) {
     width: 380,
     height: 520,
     boxSizing: "border-box",
-    padding: 20,
+    padding: 18,
     display: "flex",
     flexDirection: "column",
-    gap: 18,
+    gap: 14,
     overflow: "hidden",
     color: palette.text,
     background: palette.background,
@@ -583,6 +594,21 @@ function createStyles(theme: ResolvedTheme) {
     flex: "0 0 auto",
     transition: "background 120ms ease, border-color 120ms ease, color 120ms ease"
   } as React.CSSProperties,
+  actionIconButton: {
+    width: 44,
+    height: 44,
+    border: `1px solid ${palette.border}`,
+    borderRadius: 8,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: palette.surface,
+    color: palette.text,
+    cursor: "pointer",
+    padding: 0,
+    flex: "0 0 auto",
+    transition: "background 120ms ease, border-color 120ms ease, color 120ms ease"
+  } as React.CSSProperties,
   iconButtonDisabled: {
     color: palette.muted,
     cursor: "not-allowed",
@@ -600,15 +626,19 @@ function createStyles(theme: ResolvedTheme) {
   } as React.CSSProperties,
   addressRow: {
     display: "flex",
+    alignItems: "center",
     gap: 8
   } as React.CSSProperties,
   input: {
     flex: 1,
     minWidth: 0,
+    height: 44,
+    boxSizing: "border-box",
     border: `1px solid ${palette.border}`,
-    borderRadius: 7,
+    borderRadius: 8,
     padding: "10px 12px",
     fontSize: 14,
+    lineHeight: "20px",
     outlineColor: palette.focus,
     background: palette.surface,
     color: palette.text
@@ -626,8 +656,8 @@ function createStyles(theme: ResolvedTheme) {
     gap: 6,
     maxWidth: "100%",
     border: `1px solid ${palette.border}`,
-    borderRadius: 7,
-    padding: "5px 7px",
+    borderRadius: 8,
+    padding: "6px 8px",
     background: palette.surfaceMuted,
     color: palette.text,
     fontSize: 12,
@@ -640,8 +670,8 @@ function createStyles(theme: ResolvedTheme) {
     whiteSpace: "nowrap"
   } as React.CSSProperties,
   contextChipRemove: {
-    width: 20,
-    height: 20,
+    width: 22,
+    height: 22,
     border: `1px solid ${palette.border}`,
     borderRadius: 6,
     padding: 0,
@@ -669,13 +699,13 @@ function createStyles(theme: ResolvedTheme) {
     gap: 10,
     overflowY: "auto",
     border: `1px solid ${palette.border}`,
-    borderRadius: 7,
+    borderRadius: 8,
     padding: 12,
     background: palette.surface
   } as React.CSSProperties,
   message: {
     maxWidth: "86%",
-    borderRadius: 7,
+    borderRadius: 8,
     padding: "9px 11px",
     fontSize: 13,
     lineHeight: 1.45,

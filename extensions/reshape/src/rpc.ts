@@ -34,6 +34,13 @@ export type HistoryResult = {
 
 export type ProgressCallback = (event: TurnProgressEvent) => void
 
+export class RpcResponseError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "RpcResponseError"
+  }
+}
+
 export function normalizeRpcAddress(address: string): string {
   const trimmed = address.trim() || DEFAULT_RPC_ADDRESS
   const withScheme = /^[a-z]+:\/\//i.test(trimmed) ? trimmed : `ws://${trimmed}`
@@ -164,7 +171,7 @@ export async function sendChatMessage(
   const response = (await waitForResponse(socket, id, onProgress)) as RpcResponse
 
   if ("error" in response) {
-    throw new Error(response.error.message)
+    throw new RpcResponseError(response.error.message)
   }
   const result = response.result
 

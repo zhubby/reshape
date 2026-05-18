@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 
 import { RpcConnectionManager } from "../background-connection"
+import { RpcResponseError } from "../rpc"
 
 describe("RpcConnectionManager", () => {
   it("keeps the connected socket across status checks", async () => {
@@ -77,6 +78,48 @@ describe("RpcConnectionManager", () => {
     await manager.send("create a page", { id: 1 }, progress)
 
     expect(send).toHaveBeenCalledWith(socket, "create a page", { id: 1 }, progress)
+  })
+
+  it("keeps the socket connected after a json-rpc business error", async () => {
+    const socket = new EventTarget() as WebSocket
+    socket.close = vi.fn()
+    const manager = new RpcConnectionManager({
+      connect: vi.fn().mockResolvedValue(socket),
+      history: vi.fn().mockResolvedValue({ messages: [] }),
+      send: vi.fn().mockRejectedValue(new RpcResponseError("provider error"))
+    })
+
+    await manager.connect("127.0.0.1:7331", { id: 1 })
+    await expect(manager.send("create a page", { id: 1 })).rejects.toThrow(
+      "provider error"
+    )
+
+    expect(manager.snapshot()).toMatchObject({
+      status: "connected",
+      statusText: "provider error",
+      address: "127.0.0.1:7331"
+    })
+    expect(socket.close).not.toHaveBeenCalled()
+  })
+
+  it("marks the connection errored after a transport send failure", async () => {
+    const socket = new EventTarget() as WebSocket
+    socket.close = vi.fn()
+    const manager = new RpcConnectionManager({
+      connect: vi.fn().mockResolvedValue(socket),
+      history: vi.fn().mockResolvedValue({ messages: [] }),
+      send: vi.fn().mockRejectedValue(new Error("websocket error"))
+    })
+
+    await manager.connect("127.0.0.1:7331", { id: 1 })
+    await expect(manager.send("create a page", { id: 1 })).rejects.toThrow(
+      "websocket error"
+    )
+
+    expect(manager.snapshot()).toMatchObject({
+      status: "error",
+      statusText: "websocket error"
+    })
   })
 
   it("reports connection state in English", async () => {
