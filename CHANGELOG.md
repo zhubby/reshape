@@ -12,9 +12,11 @@
 - Optional `web_search` tool backed by Tavily, configured under `[tools.web_search]`.
 - Optional `web_fetch` tool for downloading media and binary resources into the workspace.
 - `Workspace::write_bytes` for binary writes through the existing workspace safety boundary.
+- Browser extension popup theme preference with `system`, `light`, and `dark` modes.
 
 ### Changed
 
+- Browser extension popup now uses a minimalist flat layout with icon-only controls and an RPC status dot.
 - Browser extension reset button now uses the `lucide-react` reset icon with refined button styling.
 - `reshape` CLI help now documents global options, agent options, and workspace subcommands.
 - File tools now return structured JSON to the model, including success status, paths, counts, truncation metadata, and recoverable error hints.

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { RotateCcw } from "lucide-react"
+import { Monitor, Moon, Plug, RotateCcw, Send, Sun, Unplug, X } from "lucide-react"
 
 import type { ChatResult, ConnectionStatus, HistoryResult } from "./rpc"
-import { loadRpcAddress, saveRpcAddress } from "./storage"
+import { loadRpcAddress, loadThemeMode, saveRpcAddress, saveThemeMode } from "./storage"
 import type { TabContext, TurnProgressEvent } from "./protocol"
 import {
   completeWorkingMessage,
@@ -13,8 +13,12 @@ import {
   failWorkingMessage,
   isConnectedToEditedAddress,
   messagesFromHistory,
+  nextThemeMode,
+  resolveThemeMode,
   userBubbleText,
-  type PopupMessage
+  type PopupMessage,
+  type ResolvedTheme,
+  type ThemeMode
 } from "./popup-state"
 import type { SelectionContext } from "./selection-context"
 
@@ -49,6 +53,10 @@ function IndexPopup() {
   const [input, setInput] = useState("")
   const [pendingContext, setPendingContext] = useState<SelectionContext | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES)
+  const [themeMode, setThemeMode] = useState<ThemeMode>("system")
+  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() =>
+    resolveThemeMode("system", prefersDarkScheme())
+  )
   const didAutoConnect = useRef(false)
   const effectiveStatus = effectiveConnectionStatus(status, rpcAddress, connectedAddress)
   const canChat = isConnectedToEditedAddress(status, rpcAddress, connectedAddress)
@@ -57,23 +65,55 @@ function IndexPopup() {
     rpcAddress,
     connectedAddress
   })
-
-  const statusLabel = useMemo(() => {
-    switch (effectiveStatus) {
-      case "connected":
-        return "Connected"
-      case "connecting":
-        return "Connecting"
-      case "error":
-        return "Handshake failed"
-      case "idle":
-        return "Not connected"
-    }
-  }, [effectiveStatus])
+  const styles = useMemo(() => createStyles(resolvedTheme), [resolvedTheme])
 
   useEffect(() => {
     void initializeConnection()
   }, [])
+
+  useEffect(() => {
+    let isMounted = true
+    void loadThemeMode()
+      .then((mode) => {
+        if (!isMounted) {
+          return
+        }
+        setThemeMode(mode)
+        setResolvedTheme(resolveThemeMode(mode, prefersDarkScheme()))
+      })
+      .catch(() => undefined)
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  useEffect(() => {
+    const media = window.matchMedia?.("(prefers-color-scheme: dark)")
+    if (!media) {
+      return
+    }
+
+    const updateSystemTheme = () => {
+      setResolvedTheme((current) =>
+        themeMode === "system" ? resolveThemeMode("system", media.matches) : current
+      )
+    }
+
+    updateSystemTheme()
+    if (media.addEventListener) {
+      media.addEventListener("change", updateSystemTheme)
+    } else {
+      media.addListener?.(updateSystemTheme)
+    }
+    return () => {
+      if (media.removeEventListener) {
+        media.removeEventListener("change", updateSystemTheme)
+      } else {
+        media.removeListener?.(updateSystemTheme)
+      }
+    }
+  }, [themeMode])
 
   useEffect(() => {
     const listener = (message: BackgroundMessage) => {
@@ -202,6 +242,13 @@ function IndexPopup() {
     }
   }
 
+  function toggleThemeMode() {
+    const next = nextThemeMode(themeMode)
+    setThemeMode(next)
+    setResolvedTheme(resolveThemeMode(next, prefersDarkScheme()))
+    void saveThemeMode(next)
+  }
+
   async function sendMessage() {
     const text = composePrompt(input, pendingContext)
     const bubbleText = userBubbleText(input, pendingContext)
@@ -253,25 +300,36 @@ function IndexPopup() {
   return (
     <main style={styles.shell}>
       <header style={styles.header}>
-        <div>
-          <div style={styles.titleRow}>
-            <h1 style={styles.title}>Reshape</h1>
-            <button
-              type="button"
-              aria-label="Reset session"
-              title="Reset session"
-              disabled={!canChat}
-              onClick={() => void resetSession()}
-              style={{
-                ...styles.iconButton,
-                ...(!canChat ? styles.iconButtonDisabled : {})
-              }}>
-              <RotateCcw aria-hidden="true" size={17} strokeWidth={2.25} />
-            </button>
-          </div>
-          <p style={styles.subtitle}>Local RPC chat extension</p>
+        <div style={styles.titleRow}>
+          <h1 style={styles.title}>Reshape</h1>
+          <span
+            aria-label={`RPC status: ${effectiveStatus}`}
+            title={`RPC status: ${effectiveStatus}`}
+            style={{ ...styles.statusDot, ...statusDotStyle(effectiveStatus) }}
+          />
         </div>
-        <span style={{ ...styles.badge, ...statusColor(effectiveStatus) }}>{statusLabel}</span>
+        <div style={styles.toolbar}>
+          <button
+            type="button"
+            aria-label="Reset session"
+            title="Reset session"
+            disabled={!canChat}
+            onClick={() => void resetSession()}
+            style={{
+              ...styles.iconButton,
+              ...(!canChat ? styles.iconButtonDisabled : {})
+            }}>
+            <RotateCcw aria-hidden="true" size={16} strokeWidth={2} />
+          </button>
+          <button
+            type="button"
+            aria-label={`Theme: ${themeMode}`}
+            title={`Theme: ${themeMode}`}
+            onClick={toggleThemeMode}
+            style={styles.iconButton}>
+            {themeIcon(themeMode)}
+          </button>
+        </div>
       </header>
 
       <section style={styles.fieldGroup}>
@@ -286,8 +344,17 @@ function IndexPopup() {
             placeholder="127.0.0.1:7331"
             style={styles.input}
           />
-          <button type="button" onClick={handleConnectionAction} style={styles.secondaryButton}>
-            {actionLabel}
+          <button
+            type="button"
+            aria-label={actionLabel}
+            title={actionLabel}
+            onClick={handleConnectionAction}
+            style={styles.iconButton}>
+            {canChat ? (
+              <Unplug aria-hidden="true" size={16} strokeWidth={2} />
+            ) : (
+              <Plug aria-hidden="true" size={16} strokeWidth={2} />
+            )}
           </button>
         </div>
         {statusText ? <p style={styles.statusText}>{statusText}</p> : null}
@@ -295,7 +362,7 @@ function IndexPopup() {
 
       <section style={styles.messages} aria-label="Chat messages">
         {messages.map((message, index) => (
-          <article key={`${message.role}-${index}`} style={messageStyle(message.role)}>
+          <article key={`${message.role}-${index}`} style={messageStyle(styles, message.role)}>
             <div>{message.text}</div>
           </article>
         ))}
@@ -317,7 +384,7 @@ function IndexPopup() {
                 title="Remove captured selection"
                 onClick={() => void clearPendingContext()}
                 style={styles.contextChipRemove}>
-                x
+                <X aria-hidden="true" size={13} strokeWidth={2} />
               </button>
             </div>
           ) : null}
@@ -337,9 +404,16 @@ function IndexPopup() {
         </div>
         <button
           type="submit"
+          aria-label="Send"
+          title="Send"
           disabled={!canChat || (input.trim().length === 0 && !pendingContext)}
-          style={styles.primaryButton}>
-          Send
+          style={{
+            ...styles.iconButton,
+            ...(!canChat || (input.trim().length === 0 && !pendingContext)
+              ? styles.iconButtonDisabled
+              : {})
+          }}>
+          <Send aria-hidden="true" size={16} strokeWidth={2} />
         </button>
       </form>
     </main>
@@ -386,20 +460,31 @@ async function activeTabContext(): Promise<TabContext> {
   }
 }
 
-function statusColor(status: ConnectionStatus) {
-  if (status === "connected") {
-    return { background: "#e9f8ef", color: "#17633a" }
-  }
-  if (status === "error") {
-    return { background: "#fff0ef", color: "#9d2a1f" }
-  }
-  if (status === "connecting") {
-    return { background: "#eef4ff", color: "#204f9c" }
-  }
-  return { background: "#f1f2f4", color: "#4b5563" }
+function prefersDarkScheme(): boolean {
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false
 }
 
-function messageStyle(role: ChatMessage["role"]) {
+function themeIcon(mode: ThemeMode) {
+  if (mode === "light") {
+    return <Sun aria-hidden="true" size={16} strokeWidth={2} />
+  }
+  if (mode === "dark") {
+    return <Moon aria-hidden="true" size={16} strokeWidth={2} />
+  }
+  return <Monitor aria-hidden="true" size={16} strokeWidth={2} />
+}
+
+function statusDotStyle(status: ConnectionStatus) {
+  if (status === "connected") {
+    return { background: "#22c55e" }
+  }
+  if (status === "connecting") {
+    return { background: "#eab308" }
+  }
+  return { background: "#ef4444" }
+}
+
+function messageStyle(styles: ReturnType<typeof createStyles>, role: ChatMessage["role"]) {
   return {
     ...styles.message,
     ...(role === "user" ? styles.userMessage : {}),
@@ -408,78 +493,110 @@ function messageStyle(role: ChatMessage["role"]) {
   }
 }
 
-const styles = {
+function createStyles(theme: ResolvedTheme) {
+  const palette =
+    theme === "dark"
+      ? {
+          background: "#151515",
+          surface: "#1d1d1d",
+          surfaceMuted: "#242424",
+          border: "#343434",
+          text: "#f4f4f0",
+          muted: "#a1a1aa",
+          strong: "#ffffff",
+          inverse: "#111111",
+          focus: "#84cc16",
+          warningSurface: "#302a16",
+          warningText: "#fde68a"
+        }
+      : {
+          background: "#faf9f6",
+          surface: "#ffffff",
+          surfaceMuted: "#f2f1ed",
+          border: "#dedbd2",
+          text: "#191918",
+          muted: "#6f6b63",
+          strong: "#111111",
+          inverse: "#ffffff",
+          focus: "#2563eb",
+          warningSurface: "#fff7df",
+          warningText: "#6b4e16"
+        }
+
+  return {
   shell: {
     width: 380,
     height: 520,
     boxSizing: "border-box",
-    padding: 18,
+    padding: 20,
     display: "flex",
     flexDirection: "column",
-    gap: 16,
+    gap: 18,
     overflow: "hidden",
-    color: "#172033",
-    background: "#fbfaf7",
+    color: palette.text,
+    background: palette.background,
     fontFamily:
       "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
   } as React.CSSProperties,
   header: {
     display: "flex",
     justifyContent: "space-between",
-    alignItems: "flex-start",
+    alignItems: "center",
     gap: 12
+  } as React.CSSProperties,
+  toolbar: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6
   } as React.CSSProperties,
   titleRow: {
     display: "flex",
     alignItems: "center",
-    gap: 8
+    gap: 9
   } as React.CSSProperties,
   title: {
     margin: 0,
-    fontSize: 24,
-    lineHeight: 1.1
+    fontSize: 22,
+    lineHeight: 1.1,
+    fontWeight: 650,
+    letterSpacing: 0,
+    color: palette.strong
+  } as React.CSSProperties,
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 999,
+    flex: "0 0 auto"
   } as React.CSSProperties,
   iconButton: {
-    width: 30,
-    height: 30,
-    border: "1px solid #d0d5dd",
-    borderRadius: 9,
+    width: 32,
+    height: 32,
+    border: `1px solid ${palette.border}`,
+    borderRadius: 7,
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    background: "#ffffff",
-    color: "#263044",
+    background: palette.surface,
+    color: palette.text,
     cursor: "pointer",
     padding: 0,
-    boxShadow: "0 1px 2px rgba(16, 24, 40, 0.06)",
+    flex: "0 0 auto",
     transition: "background 120ms ease, border-color 120ms ease, color 120ms ease"
   } as React.CSSProperties,
   iconButtonDisabled: {
-    color: "#98a2b3",
+    color: palette.muted,
     cursor: "not-allowed",
-    opacity: 0.65
-  } as React.CSSProperties,
-  subtitle: {
-    margin: "6px 0 0",
-    color: "#667085",
-    fontSize: 13
-  } as React.CSSProperties,
-  badge: {
-    borderRadius: 999,
-    padding: "6px 10px",
-    fontSize: 12,
-    fontWeight: 700,
-    whiteSpace: "nowrap"
+    opacity: 0.52
   } as React.CSSProperties,
   fieldGroup: {
     display: "flex",
     flexDirection: "column",
-    gap: 8
+    gap: 7
   } as React.CSSProperties,
   label: {
     fontSize: 12,
-    fontWeight: 700,
-    color: "#475467"
+    fontWeight: 600,
+    color: palette.muted
   } as React.CSSProperties,
   addressRow: {
     display: "flex",
@@ -488,12 +605,13 @@ const styles = {
   input: {
     flex: 1,
     minWidth: 0,
-    border: "1px solid #d0d5dd",
-    borderRadius: 10,
+    border: `1px solid ${palette.border}`,
+    borderRadius: 7,
     padding: "10px 12px",
     fontSize: 14,
-    outlineColor: "#265ee8",
-    background: "#ffffff"
+    outlineColor: palette.focus,
+    background: palette.surface,
+    color: palette.text
   } as React.CSSProperties,
   composer: {
     flex: 1,
@@ -507,11 +625,11 @@ const styles = {
     alignItems: "center",
     gap: 6,
     maxWidth: "100%",
-    border: "1px solid #b9c5f8",
-    borderRadius: 8,
+    border: `1px solid ${palette.border}`,
+    borderRadius: 7,
     padding: "5px 7px",
-    background: "#f3f6ff",
-    color: "#263044",
+    background: palette.surfaceMuted,
+    color: palette.text,
     fontSize: 12,
     lineHeight: 1.2
   } as React.CSSProperties,
@@ -522,42 +640,25 @@ const styles = {
     whiteSpace: "nowrap"
   } as React.CSSProperties,
   contextChipRemove: {
-    width: 18,
-    height: 18,
-    border: 0,
-    borderRadius: 999,
+    width: 20,
+    height: 20,
+    border: `1px solid ${palette.border}`,
+    borderRadius: 6,
     padding: 0,
-    background: "#dbe4ff",
-    color: "#263044",
+    background: palette.surface,
+    color: palette.text,
     cursor: "pointer",
-    fontSize: 12,
-    lineHeight: "18px"
-  } as React.CSSProperties,
-  secondaryButton: {
-    border: "1px solid #1f2937",
-    borderRadius: 10,
-    padding: "0 14px",
-    minWidth: 86,
-    background: "#ffffff",
-    color: "#111827",
-    fontWeight: 700,
-    cursor: "pointer"
-  } as React.CSSProperties,
-  primaryButton: {
-    border: 0,
-    borderRadius: 10,
-    padding: "0 16px",
-    background: "#172033",
-    color: "#ffffff",
-    fontWeight: 700,
-    cursor: "pointer"
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flex: "0 0 auto"
   } as React.CSSProperties,
   statusText: {
     margin: 0,
     minHeight: 18,
     maxHeight: 36,
     overflow: "hidden",
-    color: "#667085",
+    color: palette.muted,
     fontSize: 12
   } as React.CSSProperties,
   messages: {
@@ -567,14 +668,14 @@ const styles = {
     flexDirection: "column",
     gap: 10,
     overflowY: "auto",
-    border: "1px solid #e4e7ec",
-    borderRadius: 14,
+    border: `1px solid ${palette.border}`,
+    borderRadius: 7,
     padding: 12,
-    background: "#ffffff"
+    background: palette.surface
   } as React.CSSProperties,
   message: {
     maxWidth: "86%",
-    borderRadius: 14,
+    borderRadius: 7,
     padding: "9px 11px",
     fontSize: 13,
     lineHeight: 1.45,
@@ -582,23 +683,25 @@ const styles = {
   } as React.CSSProperties,
   userMessage: {
     alignSelf: "flex-end",
-    background: "#172033",
-    color: "#ffffff"
+    background: palette.strong,
+    color: palette.inverse
   } as React.CSSProperties,
   reshapeMessage: {
     alignSelf: "flex-start",
-    background: "#f2f4f7",
-    color: "#172033"
+    background: palette.surfaceMuted,
+    color: palette.text
   } as React.CSSProperties,
   systemMessage: {
     alignSelf: "center",
-    background: "#fff7df",
-    color: "#6b4e16"
+    background: palette.warningSurface,
+    color: palette.warningText
   } as React.CSSProperties,
   chatForm: {
     display: "flex",
+    alignItems: "flex-end",
     gap: 8
   } as React.CSSProperties
+}
 }
 
 export default IndexPopup

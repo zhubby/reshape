@@ -9,6 +9,9 @@ import {
   failWorkingMessage,
   isConnectedToEditedAddress,
   messagesFromHistory,
+  nextThemeMode,
+  normalizeThemeMode,
+  resolveThemeMode,
   userBubbleText
 } from "../popup-state"
 
@@ -152,5 +155,26 @@ Roadmap Launch the beta in June. Follow up with GA.`)
     ).toBe(
       'Use this browser selection to improve the wiki tree and related pages.\nSelection: Product notes · "Launch the beta in June."'
     )
+  })
+})
+
+describe("popup theme state", () => {
+  it("cycles through system, light, and dark themes", () => {
+    expect(nextThemeMode("system")).toBe("light")
+    expect(nextThemeMode("light")).toBe("dark")
+    expect(nextThemeMode("dark")).toBe("system")
+  })
+
+  it("falls back to system for missing or invalid stored themes", () => {
+    expect(normalizeThemeMode(undefined)).toBe("system")
+    expect(normalizeThemeMode("unknown")).toBe("system")
+    expect(normalizeThemeMode("dark")).toBe("dark")
+  })
+
+  it("resolves system theme from the current color scheme preference", () => {
+    expect(resolveThemeMode("system", true)).toBe("dark")
+    expect(resolveThemeMode("system", false)).toBe("light")
+    expect(resolveThemeMode("light", true)).toBe("light")
+    expect(resolveThemeMode("dark", false)).toBe("dark")
   })
 })

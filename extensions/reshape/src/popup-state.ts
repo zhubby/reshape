@@ -7,6 +7,33 @@ export type PopupMessage = {
   status?: "working" | "complete"
 }
 
+export type ThemeMode = "system" | "light" | "dark"
+export type ResolvedTheme = "light" | "dark"
+
+export function nextThemeMode(mode: ThemeMode): ThemeMode {
+  if (mode === "system") {
+    return "light"
+  }
+  if (mode === "light") {
+    return "dark"
+  }
+  return "system"
+}
+
+export function normalizeThemeMode(value: unknown): ThemeMode {
+  if (value === "light" || value === "dark" || value === "system") {
+    return value
+  }
+  return "system"
+}
+
+export function resolveThemeMode(mode: ThemeMode, prefersDark: boolean): ResolvedTheme {
+  if (mode === "system") {
+    return prefersDark ? "dark" : "light"
+  }
+  return mode
+}
+
 export function isConnectedToEditedAddress(
   status: ConnectionStatus,
   rpcAddress: string,
