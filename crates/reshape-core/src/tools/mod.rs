@@ -1,6 +1,7 @@
 pub mod complete;
 pub mod file;
 mod html;
+pub mod map;
 pub mod registry;
 pub mod types;
 pub mod web_fetch;

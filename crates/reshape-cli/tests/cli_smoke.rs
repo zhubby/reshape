@@ -390,6 +390,60 @@ async fn cli_runtime_builder_can_create_page_with_injected_provider() {
 }
 
 #[tokio::test]
+async fn cli_runtime_builder_registers_workspace_map_tool() {
+    let dir = tempfile::tempdir().unwrap();
+    tokio::fs::write(
+        dir.path().join("index.html"),
+        r#"<a href="pages/topic.html">Topic</a>"#,
+    )
+    .await
+    .unwrap();
+    tokio::fs::create_dir_all(dir.path().join("pages"))
+        .await
+        .unwrap();
+    tokio::fs::write(dir.path().join("pages/topic.html"), "<h1>Topic</h1>")
+        .await
+        .unwrap();
+    let config = CliArgs::parse_from(["reshape", "--workspace", dir.path().to_str().unwrap()])
+        .into_config()
+        .unwrap();
+    let provider = Arc::new(ScriptedLlmProvider::new([
+        LlmResponse {
+            content: "Mapping".to_string(),
+            tool_calls: vec![ToolCall {
+                id: "map".to_string(),
+                name: "map_workspace".to_string(),
+                arguments: serde_json::json!({}),
+            }],
+        },
+        LlmResponse {
+            content: "Done".to_string(),
+            tool_calls: vec![ToolCall {
+                id: "complete".to_string(),
+                name: "complete_task".to_string(),
+                arguments: serde_json::json!({"summary": "workspace mapped"}),
+            }],
+        },
+    ]));
+    let runtime = build_runtime_with_provider(config, provider).unwrap();
+
+    let output = runtime
+        .process(Envelope::new(InputEvent::UserText {
+            text: "map workspace".to_string(),
+            source: InputSource::WebSocket,
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        output.payload,
+        OutputEvent::Completed {
+            summary: "workspace mapped".to_string()
+        }
+    );
+}
+
+#[tokio::test]
 async fn cli_runtime_builder_requires_configured_openai_api_key_value() {
     let dir = tempfile::tempdir().unwrap();
     let mut config = CliArgs::parse_from(["reshape", "--workspace", dir.path().to_str().unwrap()])

@@ -28,6 +28,7 @@ fn prompt_requires_wiki_style_workspace_structure() {
     let prompt = system_prompt();
 
     assert!(prompt.contains("wiki-like site"));
+    assert!(prompt.contains("map_workspace"));
     assert!(prompt.contains("hub"));
     assert!(prompt.contains("pages/"));
     assert!(prompt.contains("assets/"));

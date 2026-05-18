@@ -79,6 +79,7 @@ The workspace is the shared data surface between the agent and the browser.
 The built-in file tools support:
 
 - `list_files`
+- `map_workspace` for entrypoints, HTML/Markdown links, backlinks, missing links, and orphan pages
 - `read_file` with optional `offset` / `limit` pagination
 - `write_file` with HTML normalization and validation metadata
 - `delete_file`

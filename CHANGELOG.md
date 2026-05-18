@@ -4,6 +4,7 @@
 
 ### Added
 
+- `map_workspace` tool for structured workspace file graphs, HTML/Markdown links, backlinks, missing links, entrypoints, and orphan pages.
 - `reshape.reset_session` JSON-RPC method and browser extension reset button for clearing the local session history.
 - `reshape workspace init` CLI command for creating the default workspace HTML and CSS without starting the server.
 - `reshape workspace clean` CLI command for removing all workspace contents while preserving the workspace root.

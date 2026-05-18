@@ -16,6 +16,7 @@ use reshape_core::session::store::{FileSessionStore, InMemorySessionStore, Sessi
 use reshape_core::tools::InMemoryToolRegistry;
 use reshape_core::tools::complete::CompleteTaskTool;
 use reshape_core::tools::file::FileTool;
+use reshape_core::tools::map::WorkspaceMapTool;
 use reshape_core::tools::web_fetch::WebFetchTool;
 use reshape_core::tools::web_search::WebSearchTool;
 use reshape_core::workspace::Workspace;
@@ -804,6 +805,7 @@ pub fn build_runtime_with_provider_and_session_store(
     let workspace = Arc::new(LocalWorkspace::new(config.workspace.root)?);
     let mut tools = InMemoryToolRegistry::new()
         .register(FileTool::list_files())
+        .register(WorkspaceMapTool)
         .register(FileTool::read_file())
         .register(FileTool::write_file())
         .register(FileTool::delete_file())
