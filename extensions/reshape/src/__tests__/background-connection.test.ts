@@ -59,6 +59,112 @@ describe("RpcConnectionManager", () => {
     expect(send).toHaveBeenCalledWith(socket, "create a page", { id: 1 }, undefined)
   })
 
+  it("exposes an in-flight turn in history while a send is pending", async () => {
+    const socket = new EventTarget() as WebSocket
+    socket.close = vi.fn()
+    let finishSend!: (result: {
+      id: string
+      text: string
+      activity: []
+      metadata: Record<string, unknown>
+    }) => void
+    const send = vi.fn(
+      () =>
+        new Promise<{
+          id: string
+          text: string
+          activity: []
+          metadata: Record<string, unknown>
+        }>((resolve) => {
+          finishSend = resolve
+        })
+    )
+    const manager = new RpcConnectionManager({
+      connect: vi.fn().mockResolvedValue(socket),
+      history: vi.fn().mockResolvedValue({ messages: [] }),
+      send
+    })
+
+    await manager.connect("127.0.0.1:7331", { id: 1 })
+    const pending = manager.send("create a page", { id: 1 })
+
+    expect(manager.snapshot().history?.messages).toEqual([
+      { role: "user", text: "create a page" },
+      { role: "reshape", text: "Working...", status: "working" }
+    ])
+
+    finishSend({
+      id: "turn-1",
+      text: "done",
+      activity: [],
+      metadata: {}
+    })
+    await pending
+
+    expect(manager.snapshot().history?.messages).toEqual([
+      { role: "user", text: "create a page" },
+      { role: "reshape", text: "done", status: "complete" }
+    ])
+    expect(manager.snapshot().isWorking).toBe(false)
+  })
+
+  it("rejects overlapping sends while a turn is already running", async () => {
+    const socket = new EventTarget() as WebSocket
+    socket.close = vi.fn()
+    const send = vi.fn(
+      () =>
+        new Promise<{
+          id: string
+          text: string
+          activity: []
+          metadata: Record<string, unknown>
+        }>(() => undefined)
+    )
+    const manager = new RpcConnectionManager({
+      connect: vi.fn().mockResolvedValue(socket),
+      history: vi.fn().mockResolvedValue({ messages: [] }),
+      send
+    })
+
+    await manager.connect("127.0.0.1:7331", { id: 1 })
+    void manager.send("first turn", { id: 1 })
+
+    await expect(manager.send("second turn", { id: 1 })).rejects.toThrow(
+      "Agent is already working"
+    )
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(manager.snapshot().history?.messages).toEqual([
+      { role: "user", text: "first turn" },
+      { role: "reshape", text: "Working...", status: "working" }
+    ])
+  })
+
+  it("rejects reset while a turn is already running", async () => {
+    const socket = new EventTarget() as WebSocket
+    socket.close = vi.fn()
+    const resetSession = vi.fn().mockResolvedValue({ messages: [] })
+    const manager = new RpcConnectionManager({
+      connect: vi.fn().mockResolvedValue(socket),
+      history: vi.fn().mockResolvedValue({ messages: [] }),
+      resetSession,
+      send: vi.fn(
+        () =>
+          new Promise<{
+            id: string
+            text: string
+            activity: []
+            metadata: Record<string, unknown>
+          }>(() => undefined)
+      )
+    })
+
+    await manager.connect("127.0.0.1:7331", { id: 1 })
+    void manager.send("first turn", { id: 1 })
+
+    await expect(manager.resetSession()).rejects.toThrow("Agent is already working")
+    expect(resetSession).not.toHaveBeenCalled()
+  })
+
   it("passes progress callbacks through to the rpc client", async () => {
     const socket = new EventTarget() as WebSocket
     socket.close = vi.fn()

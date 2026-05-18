@@ -28,8 +28,12 @@ export type ChatResult = {
   metadata?: Record<string, unknown>
 }
 
+export type HistoryMessage = RpcHistoryMessage & {
+  status?: "working" | "complete"
+}
+
 export type HistoryResult = {
-  messages: RpcHistoryMessage[]
+  messages: HistoryMessage[]
 }
 
 export type ProgressCallback = (event: TurnProgressEvent) => void
@@ -187,7 +191,7 @@ export async function sendChatMessage(
 export async function fetchHistory(socket: WebSocket): Promise<HistoryResult> {
   const id = `history-${Date.now()}`
   socket.send(JSON.stringify(buildHistoryRequest(id)))
-  const response = (await waitForJson(socket)) as
+  const response = (await waitForResponse(socket, id, () => undefined)) as
     | { jsonrpc: "2.0"; id: string; result: RpcHistoryBody }
     | { jsonrpc: "2.0"; id: string; error: { message: string } }
 
@@ -203,7 +207,7 @@ export async function fetchHistory(socket: WebSocket): Promise<HistoryResult> {
 export async function resetSession(socket: WebSocket): Promise<HistoryResult> {
   const id = `reset-${Date.now()}`
   socket.send(JSON.stringify(buildResetSessionRequest(id)))
-  const response = (await waitForJson(socket)) as
+  const response = (await waitForResponse(socket, id, () => undefined)) as
     | { jsonrpc: "2.0"; id: string; result: RpcHistoryBody }
     | { jsonrpc: "2.0"; id: string; error: { message: string } }
 

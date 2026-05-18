@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react"
-import { Monitor, Moon, Plug, RotateCcw, Send, Sun, Unplug, X } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
+import { CircleStop, Monitor, Moon, Plug, RotateCcw, Send, Sun, X } from "lucide-react"
 
-import type { ChatResult, ConnectionStatus, HistoryResult } from "./rpc"
+import type { ConnectionStatus, HistoryResult } from "./rpc"
+import "./style.css"
 import { loadRpcAddress, loadThemeMode, saveRpcAddress, saveThemeMode } from "./storage"
 import type { TabContext, TurnProgressEvent } from "./protocol"
 import {
-  completeWorkingMessage,
   composePrompt,
   connectionActionLabel,
   contextLabel,
@@ -26,11 +26,13 @@ type ChatMessage = PopupMessage
 type BackgroundMessage =
   | { type: "reshape.progress"; event: TurnProgressEvent }
   | { type: "reshape.pendingContext"; context: SelectionContext | null }
+  | { type: "reshape.statusChanged"; status: BackgroundStatus }
 type BackgroundStatus = {
   status: ConnectionStatus
   statusText: string
   address?: string
   history?: HistoryResult
+  isWorking?: boolean
 }
 type BackgroundResponse<T> =
   | ({ ok: true } & T)
@@ -53,6 +55,7 @@ function IndexPopup() {
   const [input, setInput] = useState("")
   const [pendingContext, setPendingContext] = useState<SelectionContext | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES)
+  const [isWorking, setIsWorking] = useState(false)
   const [themeMode, setThemeMode] = useState<ThemeMode>("system")
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() =>
     resolveThemeMode("system", prefersDarkScheme())
@@ -60,13 +63,12 @@ function IndexPopup() {
   const didAutoConnect = useRef(false)
   const effectiveStatus = effectiveConnectionStatus(status, rpcAddress, connectedAddress)
   const canChat = isConnectedToEditedAddress(status, rpcAddress, connectedAddress)
+  const canSend = canChat && !isWorking
   const actionLabel = connectionActionLabel({
     status,
     rpcAddress,
     connectedAddress
   })
-  const themeVars = useMemo(() => themeStyleVariables(resolvedTheme), [resolvedTheme])
-
   useEffect(() => {
     void initializeConnection()
   }, [])
@@ -121,6 +123,10 @@ function IndexPopup() {
         setPendingContext(message.context)
         return
       }
+      if (message?.type === "reshape.statusChanged") {
+        applyStatus(message.status)
+        return
+      }
       if (message?.type !== "reshape.progress") {
         return
       }
@@ -168,6 +174,7 @@ function IndexPopup() {
   function applyStatus(snapshot: BackgroundStatus) {
     setStatus(snapshot.status)
     setStatusText(snapshot.statusText)
+    setIsWorking(snapshot.isWorking ?? false)
     setMessages((current) => messagesFromHistory(current, snapshot.history))
     if (snapshot.address) {
       setRpcAddress(snapshot.address)
@@ -211,7 +218,7 @@ function IndexPopup() {
   }
 
   async function resetSession() {
-    if (!canChat) {
+    if (!canSend) {
       return
     }
 
@@ -221,6 +228,7 @@ function IndexPopup() {
       })
       applyStatus(response.status)
       setMessages(INITIAL_MESSAGES)
+      setIsWorking(false)
     } catch (error) {
       setStatus("error")
       setStatusText(error instanceof Error ? error.message : "Reset failed")
@@ -253,11 +261,12 @@ function IndexPopup() {
     const contextToSend = pendingContext
     const text = composePrompt(input, pendingContext)
     const bubbleText = userBubbleText(input, pendingContext)
-    if (!bubbleText || !canChat) {
+    if (!bubbleText || !canSend) {
       return
     }
 
     setInput("")
+    setIsWorking(true)
     if (contextToSend) {
       setPendingContext(null)
       await sendBackground<{ pendingContext: null }>({
@@ -274,22 +283,14 @@ function IndexPopup() {
     try {
       const tab = await activeTabContext()
       const response = await sendBackground<{
-        result: ChatResult
         status: BackgroundStatus
       }>({
         type: "reshape.send",
         text,
+        displayText: bubbleText,
         tab
       })
-      const result = response.result
-      setStatus(response.status.status)
-      setStatusText(response.status.statusText)
-      if (response.status.address) {
-        setConnectedAddress(
-          response.status.status === "connected" ? response.status.address : undefined
-        )
-      }
-      setMessages((current) => completeWorkingMessage(current, result))
+      applyStatus(response.status)
     } catch (error) {
       const errorText = error instanceof Error ? error.message : "Send failed"
       if (contextToSend && shouldRestorePendingContext(errorText)) {
@@ -303,13 +304,13 @@ function IndexPopup() {
       if (shouldRestorePendingContext(errorText)) {
         setStatus("error")
       }
+      setIsWorking(false)
       setStatusText(errorText)
     }
   }
 
   return (
-    <main className="reshape-shell" data-theme={resolvedTheme} style={themeVars}>
-      <style>{popupStyles}</style>
+    <main className="reshape-shell" data-theme={resolvedTheme}>
       <header className="reshape-header">
         <div className="reshape-title-row">
           <h1 className="reshape-title">Reshape</h1>
@@ -325,7 +326,7 @@ function IndexPopup() {
             type="button"
             aria-label="Reset session"
             title="Reset session"
-            disabled={!canChat}
+            disabled={!canSend}
             onClick={() => void resetSession()}
             className="reshape-button reshape-button-icon">
             <RotateCcw aria-hidden="true" size={16} strokeWidth={2} />
@@ -360,7 +361,7 @@ function IndexPopup() {
             onClick={handleConnectionAction}
             className="reshape-button reshape-button-square reshape-button-accent">
             {canChat ? (
-              <Unplug aria-hidden="true" size={16} strokeWidth={2} />
+              <CircleStop aria-hidden="true" size={16} strokeWidth={2} />
             ) : (
               <Plug aria-hidden="true" size={16} strokeWidth={2} />
             )}
@@ -402,9 +403,11 @@ function IndexPopup() {
           <input
             value={input}
             onChange={(event) => setInput(event.currentTarget.value)}
-            disabled={!canChat}
+            disabled={!canSend}
             placeholder={
-              canChat
+              isWorking
+                ? "Waiting for response..."
+                : canChat
                 ? pendingContext
                   ? "Add an instruction..."
                   : "Tell reshape what to do..."
@@ -417,7 +420,7 @@ function IndexPopup() {
           type="submit"
           aria-label="Send"
           title="Send"
-          disabled={!canChat || (input.trim().length === 0 && !pendingContext)}
+          disabled={!canSend || (input.trim().length === 0 && !pendingContext)}
           className="reshape-button reshape-button-square reshape-button-primary">
           <Send aria-hidden="true" size={16} strokeWidth={2} />
         </button>
@@ -485,253 +488,14 @@ function themeIcon(mode: ThemeMode) {
   return <Monitor aria-hidden="true" size={16} strokeWidth={2} />
 }
 
-function statusDotStyle(status: ConnectionStatus) {
-  if (status === "connected") {
-    return { background: "#22c55e" }
+function messageClassName(role: ChatMessage["role"]) {
+  if (role === "user") {
+    return "reshape-message reshape-message-user"
   }
-  if (status === "connecting") {
-    return { background: "#eab308" }
+  if (role === "reshape") {
+    return "reshape-message reshape-message-reshape"
   }
-  return { background: "#ef4444" }
-}
-
-function messageStyle(styles: ReturnType<typeof createStyles>, role: ChatMessage["role"]) {
-  return {
-    ...styles.message,
-    ...(role === "user" ? styles.userMessage : {}),
-    ...(role === "reshape" ? styles.reshapeMessage : {}),
-    ...(role === "system" ? styles.systemMessage : {})
-  }
-}
-
-function createStyles(theme: ResolvedTheme) {
-  const palette =
-    theme === "dark"
-      ? {
-          background: "#151515",
-          surface: "#1d1d1d",
-          surfaceMuted: "#242424",
-          border: "#343434",
-          text: "#f4f4f0",
-          muted: "#a1a1aa",
-          strong: "#ffffff",
-          inverse: "#111111",
-          focus: "#84cc16",
-          warningSurface: "#302a16",
-          warningText: "#fde68a"
-        }
-      : {
-          background: "#faf9f6",
-          surface: "#ffffff",
-          surfaceMuted: "#f2f1ed",
-          border: "#dedbd2",
-          text: "#191918",
-          muted: "#6f6b63",
-          strong: "#111111",
-          inverse: "#ffffff",
-          focus: "#2563eb",
-          warningSurface: "#fff7df",
-          warningText: "#6b4e16"
-        }
-
-  return {
-  shell: {
-    width: 380,
-    height: 520,
-    boxSizing: "border-box",
-    padding: 18,
-    display: "flex",
-    flexDirection: "column",
-    gap: 14,
-    overflow: "hidden",
-    color: palette.text,
-    background: palette.background,
-    fontFamily:
-      "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-  } as React.CSSProperties,
-  header: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 12
-  } as React.CSSProperties,
-  toolbar: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6
-  } as React.CSSProperties,
-  titleRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 9
-  } as React.CSSProperties,
-  title: {
-    margin: 0,
-    fontSize: 22,
-    lineHeight: 1.1,
-    fontWeight: 650,
-    letterSpacing: 0,
-    color: palette.strong
-  } as React.CSSProperties,
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 999,
-    flex: "0 0 auto"
-  } as React.CSSProperties,
-  iconButton: {
-    width: 32,
-    height: 32,
-    border: `1px solid ${palette.border}`,
-    borderRadius: 7,
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    background: palette.surface,
-    color: palette.text,
-    cursor: "pointer",
-    padding: 0,
-    flex: "0 0 auto",
-    transition: "background 120ms ease, border-color 120ms ease, color 120ms ease"
-  } as React.CSSProperties,
-  actionIconButton: {
-    width: 44,
-    height: 44,
-    border: `1px solid ${palette.border}`,
-    borderRadius: 8,
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    background: palette.surface,
-    color: palette.text,
-    cursor: "pointer",
-    padding: 0,
-    flex: "0 0 auto",
-    transition: "background 120ms ease, border-color 120ms ease, color 120ms ease"
-  } as React.CSSProperties,
-  iconButtonDisabled: {
-    color: palette.muted,
-    cursor: "not-allowed",
-    opacity: 0.52
-  } as React.CSSProperties,
-  fieldGroup: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 7
-  } as React.CSSProperties,
-  label: {
-    fontSize: 12,
-    fontWeight: 600,
-    color: palette.muted
-  } as React.CSSProperties,
-  addressRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8
-  } as React.CSSProperties,
-  input: {
-    flex: 1,
-    minWidth: 0,
-    height: 44,
-    boxSizing: "border-box",
-    border: `1px solid ${palette.border}`,
-    borderRadius: 8,
-    padding: "10px 12px",
-    fontSize: 14,
-    lineHeight: "20px",
-    outlineColor: palette.focus,
-    background: palette.surface,
-    color: palette.text
-  } as React.CSSProperties,
-  composer: {
-    flex: 1,
-    minWidth: 0,
-    display: "flex",
-    flexDirection: "column",
-    gap: 6
-  } as React.CSSProperties,
-  contextChip: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    maxWidth: "100%",
-    border: `1px solid ${palette.border}`,
-    borderRadius: 8,
-    padding: "6px 8px",
-    background: palette.surfaceMuted,
-    color: palette.text,
-    fontSize: 12,
-    lineHeight: 1.2
-  } as React.CSSProperties,
-  contextChipText: {
-    minWidth: 0,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap"
-  } as React.CSSProperties,
-  contextChipRemove: {
-    width: 22,
-    height: 22,
-    border: `1px solid ${palette.border}`,
-    borderRadius: 6,
-    padding: 0,
-    background: palette.surface,
-    color: palette.text,
-    cursor: "pointer",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    flex: "0 0 auto"
-  } as React.CSSProperties,
-  statusText: {
-    margin: 0,
-    minHeight: 18,
-    maxHeight: 36,
-    overflow: "hidden",
-    color: palette.muted,
-    fontSize: 12
-  } as React.CSSProperties,
-  messages: {
-    flex: 1,
-    minHeight: 0,
-    display: "flex",
-    flexDirection: "column",
-    gap: 10,
-    overflowY: "auto",
-    border: `1px solid ${palette.border}`,
-    borderRadius: 8,
-    padding: 12,
-    background: palette.surface
-  } as React.CSSProperties,
-  message: {
-    maxWidth: "86%",
-    borderRadius: 8,
-    padding: "9px 11px",
-    fontSize: 13,
-    lineHeight: 1.45,
-    whiteSpace: "pre-wrap"
-  } as React.CSSProperties,
-  userMessage: {
-    alignSelf: "flex-end",
-    background: palette.strong,
-    color: palette.inverse
-  } as React.CSSProperties,
-  reshapeMessage: {
-    alignSelf: "flex-start",
-    background: palette.surfaceMuted,
-    color: palette.text
-  } as React.CSSProperties,
-  systemMessage: {
-    alignSelf: "center",
-    background: palette.warningSurface,
-    color: palette.warningText
-  } as React.CSSProperties,
-  chatForm: {
-    display: "flex",
-    alignItems: "flex-end",
-    gap: 8
-  } as React.CSSProperties
-}
+  return "reshape-message reshape-message-system"
 }
 
 export default IndexPopup

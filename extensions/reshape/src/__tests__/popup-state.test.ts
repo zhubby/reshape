@@ -21,14 +21,14 @@ import {
 } from "../selection-context"
 
 describe("popup connection state", () => {
-  it("shows stop only when the edited address is already connected", () => {
+  it("shows disconnect only when the edited address is already connected", () => {
     expect(
       connectionActionLabel({
         status: "connected",
         rpcAddress: "127.0.0.1:7331",
         connectedAddress: "127.0.0.1:7331"
       })
-    ).toBe("Stop")
+    ).toBe("Disconnect")
   })
 
   it("shows handshake after a failure or address edit", () => {
@@ -103,6 +103,26 @@ describe("popup connection state", () => {
       { role: "reshape", text: "Done", status: "complete" }
     ])
   })
+
+  it("does not duplicate a completed reshape message after status hydration", () => {
+    expect(
+      completeWorkingMessage(
+        [
+          { role: "user", text: "change title" },
+          { role: "reshape", text: "Done", status: "complete" }
+        ],
+        {
+          id: "turn-1",
+          text: "Done",
+          activity: []
+        }
+      )
+    ).toEqual([
+      { role: "user", text: "change title" },
+      { role: "reshape", text: "Done", status: "complete" }
+    ])
+  })
+
 
   it("replaces the latest working reshape message on failure", () => {
     expect(

@@ -6,6 +6,7 @@ import {
   buildHandshakeFrame,
   buildInputRequest,
   buildResetSessionRequest,
+  fetchHistory,
   isHandshakeAck,
   normalizeRpcAddress,
   outputText,
@@ -243,6 +244,41 @@ describe("resetSession", () => {
     const result = await resetSession(socket as unknown as WebSocket)
 
     expect(result.messages).toEqual([])
+    vi.restoreAllMocks()
+  })
+})
+
+describe("fetchHistory", () => {
+  it("ignores unrelated progress notifications while waiting for history", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(3)
+    const socket = new FakeSocket([
+      {
+        jsonrpc: "2.0",
+        method: "reshape.progress",
+        params: {
+          turnId: "turn-1",
+          sequence: 1,
+          kind: "tool_started",
+          toolName: "write_file",
+          argumentsPreview: "{}",
+          resultPreview: null,
+          message: "Running write_file"
+        }
+      },
+      {
+        jsonrpc: "2.0",
+        id: "history-3",
+        result: {
+          schemaVersion: "1.0",
+          sessionKey: "local:main",
+          messages: [{ role: "user", text: "previous prompt" }]
+        }
+      }
+    ])
+
+    const result = await fetchHistory(socket as unknown as WebSocket)
+
+    expect(result.messages).toEqual([{ role: "user", text: "previous prompt" }])
     vi.restoreAllMocks()
   })
 })

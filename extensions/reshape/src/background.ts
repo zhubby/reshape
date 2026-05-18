@@ -15,7 +15,7 @@ import {
 type BackgroundMessage =
   | { type: "reshape.status" }
   | { type: "reshape.connect"; address: string; tab: TabContext }
-  | { type: "reshape.send"; text: string; tab: TabContext }
+  | { type: "reshape.send"; text: string; displayText?: string; tab: TabContext }
   | { type: "reshape.resetSession" }
   | { type: "reshape.clearPendingContext" }
   | { type: "reshape.setPendingContext"; context: SelectionContext }
@@ -47,10 +47,20 @@ async function handleMessage(message: BackgroundMessage) {
     case "reshape.connect":
       return { status: await manager.connect(message.address, message.tab) }
     case "reshape.send":
-      return {
-        result: await manager.send(message.text, message.tab, forwardProgress),
-        status: manager.snapshot()
+      {
+        const status = manager.snapshot()
+        if (status.status !== "connected") {
+          throw new Error("reshape RPC is not connected")
+        }
+        if (status.isWorking) {
+          throw new Error("Agent is already working")
+        }
       }
+      void manager
+        .send(message.text, message.tab, forwardProgress, message.displayText)
+        .then(() => notifyStatus(manager.snapshot()))
+        .catch(() => notifyStatus(manager.snapshot()))
+      return { status: manager.snapshot() }
     case "reshape.resetSession":
       return { status: await manager.resetSession() }
     case "reshape.clearPendingContext":
@@ -150,6 +160,18 @@ export function forwardProgress(event: TurnProgressEvent) {
     {
       type: "reshape.progress",
       event
+    },
+    () => {
+      void chrome.runtime.lastError
+    }
+  )
+}
+
+function notifyStatus(status: ReturnType<typeof manager.snapshot>) {
+  chrome.runtime.sendMessage(
+    {
+      type: "reshape.statusChanged",
+      status
     },
     () => {
       void chrome.runtime.lastError

@@ -26,9 +26,9 @@ Load the generated build directory as an unpacked extension in Chrome.
 
 ## RPC Connection
 
-The popup shows an RPC address input, icon-only controls, an RPC status dot,
-and a persisted `system` / `light` / `dark` theme toggle. The default RPC
-address value is:
+The popup shows an RPC address input, Tailwind-powered shadcn-inspired icon
+controls, custom scrollbars, an RPC status dot, and a persisted `system` /
+`light` / `dark` theme toggle. The default RPC address value is:
 
 ```text
 127.0.0.1:7331

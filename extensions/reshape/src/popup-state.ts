@@ -64,9 +64,9 @@ export function connectionActionLabel({
   status: ConnectionStatus
   rpcAddress: string
   connectedAddress?: string
-}): "Handshake" | "Stop" {
+}): "Disconnect" | "Handshake" {
   return isConnectedToEditedAddress(status, rpcAddress, connectedAddress)
-    ? "Stop"
+    ? "Disconnect"
     : "Handshake"
 }
 
@@ -83,6 +83,10 @@ export function completeWorkingMessage(
 ): PopupMessage[] {
   const index = lastWorkingReshapeIndex(messages)
   if (index === -1) {
+    const last = messages.at(-1)
+    if (last?.role === "reshape" && last.text === result.text) {
+      return messages
+    }
     return [...messages, { role: "reshape", text: result.text }]
   }
 
