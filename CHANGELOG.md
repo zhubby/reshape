@@ -4,6 +4,7 @@
 
 ### Added
 
+- Configuration guide for `reshape-core::config::AppConfig` and the matching TOML file fields.
 - `map_workspace` tool for structured workspace file graphs, HTML/Markdown links, backlinks, missing links, entrypoints, and orphan pages.
 - `reshape.reset_session` JSON-RPC method and browser extension reset button for clearing the local session history.
 - `reshape workspace init` CLI command for creating the default workspace HTML and CSS without starting the server.
@@ -14,6 +15,7 @@
 
 ### Changed
 
+- Browser extension reset button now uses the `lucide-react` reset icon with refined button styling.
 - `reshape` CLI help now documents global options, agent options, and workspace subcommands.
 - File tools now return structured JSON to the model, including success status, paths, counts, truncation metadata, and recoverable error hints.
 - `read_file` supports optional `offset` and `limit` arguments for line-numbered paginated reads.

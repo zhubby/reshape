@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest"
 
 import {
-  connectionActionLabel,
-  appendActivityToWorkingMessage,
   completeWorkingMessage,
+  connectionActionLabel,
   effectiveConnectionStatus,
+  failWorkingMessage,
   isConnectedToEditedAddress,
   messagesFromHistory
 } from "../popup-state"
@@ -48,12 +48,7 @@ describe("popup connection state", () => {
   })
 
   it("uses hydrated backend history when it is available", () => {
-    const fallback = [
-      {
-        role: "system" as const,
-        text: "Set the reshape RPC address and complete the handshake to start chatting."
-      }
-    ]
+    const fallback = []
     const history = {
       messages: [{ role: "user" as const, text: "previous prompt" }]
     }
@@ -61,35 +56,13 @@ describe("popup connection state", () => {
     expect(messagesFromHistory(fallback, history)).toEqual(history.messages)
   })
 
-  it("keeps the default prompt when backend history is empty", () => {
-    const fallback = [{ role: "system" as const, text: "Handshake first" }]
+  it("keeps the empty default when backend history is empty", () => {
+    const fallback = []
 
     expect(messagesFromHistory(fallback, { messages: [] })).toEqual(fallback)
   })
 
-  it("appends activity to the latest working reshape message", () => {
-    const event = {
-      turnId: "turn-1",
-      sequence: 1,
-      kind: "tool_started" as const,
-      toolName: "write_file",
-      argumentsPreview: "{\"path\":\"index.html\"}",
-      resultPreview: null,
-      message: "Running write_file"
-    }
-
-    expect(
-      appendActivityToWorkingMessage(
-        [
-          { role: "user", text: "change title" },
-          { role: "reshape", text: "Working...", status: "working", activity: [] }
-        ],
-        event
-      )[1].activity
-    ).toEqual([event])
-  })
-
-  it("completes the working reshape message with final text and activity", () => {
+  it("completes the latest working reshape message with final text only", () => {
     const activity = [
       {
         turnId: "turn-1",
@@ -104,13 +77,34 @@ describe("popup connection state", () => {
 
     expect(
       completeWorkingMessage(
-        [{ role: "reshape", text: "Working...", status: "working", activity: [] }],
+        [
+          { role: "reshape", text: "Earlier", status: "complete" },
+          { role: "reshape", text: "Working...", status: "working" }
+        ],
         {
           id: "turn-1",
           text: "Done",
           activity
         }
       )
-    ).toEqual([{ role: "reshape", text: "Done", status: "complete", activity }])
+    ).toEqual([
+      { role: "reshape", text: "Earlier", status: "complete" },
+      { role: "reshape", text: "Done", status: "complete" }
+    ])
+  })
+
+  it("replaces the latest working reshape message on failure", () => {
+    expect(
+      failWorkingMessage(
+        [
+          { role: "user", text: "change title" },
+          { role: "reshape", text: "Working...", status: "working" }
+        ],
+        "Send failed"
+      )
+    ).toEqual([
+      { role: "user", text: "change title" },
+      { role: "reshape", text: "Send failed", status: "complete" }
+    ])
   })
 })

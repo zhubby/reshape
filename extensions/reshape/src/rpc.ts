@@ -135,12 +135,7 @@ export function outputText(output: RpcOutput): string {
 }
 
 export function resultText(result: Pick<RpcResultBody, "output" | "metadata">): string {
-  const text = outputText(result.output)
-  const changedFiles = changedFilesFromMetadata(result.metadata)
-  if (changedFiles.length === 0) {
-    return text
-  }
-  return `${text}\nChanged files: ${changedFiles.join(", ")}`
+  return outputText(result.output)
 }
 
 export async function connectAndHandshake(
@@ -212,14 +207,6 @@ export async function resetSession(socket: WebSocket): Promise<HistoryResult> {
   return {
     messages: response.result.messages
   }
-}
-
-function changedFilesFromMetadata(metadata: Record<string, unknown>): string[] {
-  const value = metadata.changedFiles
-  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
-    return []
-  }
-  return value
 }
 
 function progressEventsFromMetadata(metadata: Record<string, unknown>): TurnProgressEvent[] {

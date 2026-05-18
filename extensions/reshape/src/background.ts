@@ -41,12 +41,14 @@ async function handleMessage(message: BackgroundMessage) {
   }
 }
 
-function forwardProgress(event: TurnProgressEvent) {
+export function forwardProgress(event: TurnProgressEvent) {
   chrome.runtime.sendMessage(
     {
       type: "reshape.progress",
       event
     },
-    () => undefined
+    () => {
+      void chrome.runtime.lastError
+    }
   )
 }

@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react"
+import { RotateCcw } from "lucide-react"
 
 import type { ChatResult, ConnectionStatus, HistoryResult } from "./rpc"
 import { loadRpcAddress, saveRpcAddress } from "./storage"
 import type { TabContext, TurnProgressEvent } from "./protocol"
 import {
-  appendActivityToWorkingMessage,
   completeWorkingMessage,
   connectionActionLabel,
   effectiveConnectionStatus,
+  failWorkingMessage,
   isConnectedToEditedAddress,
   messagesFromHistory,
   type PopupMessage
@@ -28,12 +29,7 @@ type BackgroundResponse<T> =
       error: string
     }
 
-const INITIAL_MESSAGES: ChatMessage[] = [
-  {
-    role: "system",
-    text: "Set the reshape RPC address and complete the handshake to start chatting."
-  }
-]
+const INITIAL_MESSAGES: ChatMessage[] = []
 
 function IndexPopup() {
   const [rpcAddress, setRpcAddress] = useState("127.0.0.1:7331")
@@ -73,7 +69,6 @@ function IndexPopup() {
       if (message?.type !== "reshape.progress") {
         return
       }
-      setMessages((current) => appendActivityToWorkingMessage(current, message.event))
       setStatusText(message.event.message)
     }
     chrome.runtime.onMessage.addListener(listener)
@@ -202,7 +197,7 @@ function IndexPopup() {
     setMessages((current) => [
       ...current,
       { role: "user", text },
-      { role: "reshape", text: "Working...", status: "working", activity: [] }
+      { role: "reshape", text: "Working...", status: "working" }
     ])
 
     try {
@@ -225,14 +220,10 @@ function IndexPopup() {
       }
       setMessages((current) => completeWorkingMessage(current, result))
     } catch (error) {
-      setMessages((current) => [
-        ...current,
-        {
-          role: "system",
-          text: error instanceof Error ? error.message : "Send failed"
-        }
-      ])
+      const errorText = error instanceof Error ? error.message : "Send failed"
+      setMessages((current) => failWorkingMessage(current, errorText))
       setStatus("error")
+      setStatusText(errorText)
     }
   }
 
@@ -252,7 +243,7 @@ function IndexPopup() {
                 ...styles.iconButton,
                 ...(!canChat ? styles.iconButtonDisabled : {})
               }}>
-              <ResetIcon />
+              <RotateCcw aria-hidden="true" size={17} strokeWidth={2.25} />
             </button>
           </div>
           <p style={styles.subtitle}>Local RPC chat extension</p>
@@ -283,7 +274,6 @@ function IndexPopup() {
         {messages.map((message, index) => (
           <article key={`${message.role}-${index}`} style={messageStyle(message.role)}>
             <div>{message.text}</div>
-            {message.activity?.length ? <Activity events={message.activity} /> : null}
           </article>
         ))}
       </section>
@@ -312,24 +302,6 @@ function IndexPopup() {
   )
 }
 
-function ResetIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      width="16"
-      height="16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round">
-      <path d="M3 12a9 9 0 1 0 3-6.7" />
-      <path d="M3 4v6h6" />
-    </svg>
-  )
-}
-
 function sendBackground<T>(message: Record<string, unknown>): Promise<T> {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(message, (response: BackgroundResponse<T>) => {
@@ -349,47 +321,6 @@ function sendBackground<T>(message: Record<string, unknown>): Promise<T> {
 
 function isOkResponse<T>(response: BackgroundResponse<T> | undefined): response is { ok: true } & T {
   return response?.ok === true
-}
-
-function Activity({ events }: { events: TurnProgressEvent[] }) {
-  return (
-    <details style={styles.activity}>
-      <summary style={styles.activitySummary}>Activity</summary>
-      <ol style={styles.activityList}>
-        {events.map((event) => (
-          <li key={`${event.turnId}-${event.sequence}`} style={styles.activityItem}>
-            <span style={styles.activityKind}>{activityLabel(event)}</span>
-            {event.toolName ? <span style={styles.activityTool}>{event.toolName}</span> : null}
-            {event.argumentsPreview ? (
-              <code style={styles.activityCode}>{event.argumentsPreview}</code>
-            ) : null}
-            {event.resultPreview ? (
-              <code style={styles.activityCode}>{event.resultPreview}</code>
-            ) : null}
-          </li>
-        ))}
-      </ol>
-    </details>
-  )
-}
-
-function activityLabel(event: TurnProgressEvent): string {
-  switch (event.kind) {
-    case "turn_started":
-      return "Started"
-    case "assistant_message":
-      return "Message"
-    case "tool_started":
-      return "Running"
-    case "tool_finished":
-      return "Finished"
-    case "tool_failed":
-      return "Failed"
-    case "turn_completed":
-      return "Completed"
-    case "turn_failed":
-      return "Failed"
-  }
 }
 
 async function activeTabContext(): Promise<TabContext> {
@@ -429,12 +360,13 @@ function messageStyle(role: ChatMessage["role"]) {
 const styles = {
   shell: {
     width: 380,
-    minHeight: 520,
+    height: 520,
     boxSizing: "border-box",
     padding: 18,
     display: "flex",
     flexDirection: "column",
     gap: 16,
+    overflow: "hidden",
     color: "#172033",
     background: "#fbfaf7",
     fontFamily:
@@ -457,17 +389,19 @@ const styles = {
     lineHeight: 1.1
   } as React.CSSProperties,
   iconButton: {
-    width: 28,
-    height: 28,
+    width: 30,
+    height: 30,
     border: "1px solid #d0d5dd",
-    borderRadius: 8,
+    borderRadius: 9,
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
     background: "#ffffff",
-    color: "#344054",
+    color: "#263044",
     cursor: "pointer",
-    padding: 0
+    padding: 0,
+    boxShadow: "0 1px 2px rgba(16, 24, 40, 0.06)",
+    transition: "background 120ms ease, border-color 120ms ease, color 120ms ease"
   } as React.CSSProperties,
   iconButtonDisabled: {
     color: "#98a2b3",
@@ -532,11 +466,14 @@ const styles = {
   statusText: {
     margin: 0,
     minHeight: 18,
+    maxHeight: 36,
+    overflow: "hidden",
     color: "#667085",
     fontSize: 12
   } as React.CSSProperties,
   messages: {
     flex: 1,
+    minHeight: 0,
     display: "flex",
     flexDirection: "column",
     gap: 10,
@@ -553,48 +490,6 @@ const styles = {
     fontSize: 13,
     lineHeight: 1.45,
     whiteSpace: "pre-wrap"
-  } as React.CSSProperties,
-  activity: {
-    marginTop: 8,
-    whiteSpace: "normal"
-  } as React.CSSProperties,
-  activitySummary: {
-    cursor: "pointer",
-    color: "#475467",
-    fontSize: 12,
-    fontWeight: 700
-  } as React.CSSProperties,
-  activityList: {
-    margin: "8px 0 0",
-    paddingLeft: 18,
-    display: "flex",
-    flexDirection: "column",
-    gap: 6
-  } as React.CSSProperties,
-  activityItem: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 4
-  } as React.CSSProperties,
-  activityKind: {
-    color: "#344054",
-    fontSize: 12,
-    fontWeight: 700
-  } as React.CSSProperties,
-  activityTool: {
-    color: "#475467",
-    fontSize: 12
-  } as React.CSSProperties,
-  activityCode: {
-    maxWidth: 260,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    borderRadius: 6,
-    padding: "5px 6px",
-    background: "#ffffff",
-    color: "#344054",
-    fontSize: 11,
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace"
   } as React.CSSProperties,
   userMessage: {
     alignSelf: "flex-end",

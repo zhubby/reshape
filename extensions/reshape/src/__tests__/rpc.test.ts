@@ -125,7 +125,7 @@ describe("outputText", () => {
 })
 
 describe("resultText", () => {
-  it("appends changed file feedback from rpc metadata", () => {
+  it("returns only the rpc output text when changed file metadata is present", () => {
     expect(
       resultText({
         output: {
@@ -136,7 +136,7 @@ describe("resultText", () => {
           changedFiles: ["index.html", "assets/site.css"]
         }
       })
-    ).toBe("Page updated\nChanged files: index.html, assets/site.css")
+    ).toBe("Page updated")
   })
 
   it("ignores malformed changed file metadata", () => {

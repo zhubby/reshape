@@ -1,11 +1,9 @@
 import type { ChatResult, ConnectionStatus } from "./rpc"
-import type { TurnProgressEvent } from "./protocol"
 
 export type PopupMessage = {
   role: "user" | "reshape" | "system"
   text: string
   status?: "working" | "complete"
-  activity?: TurnProgressEvent[]
 }
 
 export function isConnectedToEditedAddress(
@@ -51,41 +49,13 @@ export function messagesFromHistory(
   return history?.messages.length ? history.messages : fallback
 }
 
-export function appendActivityToWorkingMessage(
-  messages: PopupMessage[],
-  event: TurnProgressEvent
-): PopupMessage[] {
-  const index = lastWorkingReshapeIndex(messages)
-  if (index === -1) {
-    return messages
-  }
-
-  return messages.map((message, messageIndex) => {
-    if (messageIndex !== index) {
-      return message
-    }
-    const activity = message.activity ?? []
-    if (
-      activity.some(
-        (item) => item.turnId === event.turnId && item.sequence === event.sequence
-      )
-    ) {
-      return message
-    }
-    return {
-      ...message,
-      activity: [...activity, event]
-    }
-  })
-}
-
 export function completeWorkingMessage(
   messages: PopupMessage[],
   result: ChatResult
 ): PopupMessage[] {
   const index = lastWorkingReshapeIndex(messages)
   if (index === -1) {
-    return [...messages, { role: "reshape", text: result.text, activity: result.activity }]
+    return [...messages, { role: "reshape", text: result.text }]
   }
 
   return messages.map((message, messageIndex) => {
@@ -93,10 +63,27 @@ export function completeWorkingMessage(
       return message
     }
     return {
-      ...message,
+      role: message.role,
       text: result.text,
-      status: "complete",
-      activity: result.activity.length > 0 ? result.activity : message.activity
+      status: "complete"
+    }
+  })
+}
+
+export function failWorkingMessage(messages: PopupMessage[], text: string): PopupMessage[] {
+  const index = lastWorkingReshapeIndex(messages)
+  if (index === -1) {
+    return [...messages, { role: "reshape", text }]
+  }
+
+  return messages.map((message, messageIndex) => {
+    if (messageIndex !== index) {
+      return message
+    }
+    return {
+      role: message.role,
+      text,
+      status: "complete"
     }
   })
 }
