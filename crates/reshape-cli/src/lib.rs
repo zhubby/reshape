@@ -18,6 +18,7 @@ use reshape_core::tools::complete::CompleteTaskTool;
 use reshape_core::tools::file::FileTool;
 use reshape_core::tools::web_fetch::WebFetchTool;
 use reshape_core::tools::web_search::WebSearchTool;
+use reshape_core::workspace::Workspace;
 use reshape_core::workspace::local::LocalWorkspace;
 use serde::Deserialize;
 use tokio::net::TcpListener;
@@ -77,12 +78,27 @@ pub struct ServerConfig {
 pub enum CliCommand {
     Agent,
     Version,
+    WorkspaceClean,
+    WorkspaceInit,
 }
 
 #[derive(Debug, Clone, Subcommand, PartialEq, Eq)]
 enum CommandArgs {
     Agent(AgentOptions),
     Version,
+    Workspace(WorkspaceCommandArgs),
+}
+
+#[derive(Debug, Clone, Args, PartialEq, Eq)]
+struct WorkspaceCommandArgs {
+    #[command(subcommand)]
+    command: WorkspaceSubcommandArgs,
+}
+
+#[derive(Debug, Clone, Subcommand, PartialEq, Eq)]
+enum WorkspaceSubcommandArgs {
+    Clean(AgentOptions),
+    Init(AgentOptions),
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -250,6 +266,10 @@ impl CliArgs {
     pub fn agent_options(&self) -> AgentOptions {
         match &self.command {
             Some(CommandArgs::Agent(options)) => self.agent.clone().merge(options.clone()),
+            Some(CommandArgs::Workspace(WorkspaceCommandArgs {
+                command:
+                    WorkspaceSubcommandArgs::Clean(options) | WorkspaceSubcommandArgs::Init(options),
+            })) => self.agent.clone().merge(options.clone()),
             _ => self.agent.clone(),
         }
     }
@@ -258,6 +278,12 @@ impl CliArgs {
     pub fn command_kind(&self) -> CliCommand {
         match &self.command {
             Some(CommandArgs::Version) => CliCommand::Version,
+            Some(CommandArgs::Workspace(WorkspaceCommandArgs {
+                command: WorkspaceSubcommandArgs::Clean(_),
+            })) => CliCommand::WorkspaceClean,
+            Some(CommandArgs::Workspace(WorkspaceCommandArgs {
+                command: WorkspaceSubcommandArgs::Init(_),
+            })) => CliCommand::WorkspaceInit,
             _ => CliCommand::Agent,
         }
     }
@@ -324,6 +350,28 @@ impl CliArgs {
         tracing::info!(config_path = %config_path.display(), "wrote default config file");
         Ok(())
     }
+
+    pub async fn init_workspace_with_home(&self, home: &Path) -> Result<bool> {
+        self.prepare_user_environment_with_home(home)?;
+        let workspace = self.resolved_workspace_for_init_with_home(home)?;
+        tokio::fs::create_dir_all(&workspace).await?;
+        ensure_workspace_index_html(&workspace).await
+    }
+
+    fn resolved_workspace_for_init_with_home(&self, home: &Path) -> Result<PathBuf> {
+        let options = self.agent_options();
+        if let Some(workspace) = options.workspace {
+            return Ok(workspace);
+        }
+
+        let config_path = self.resolved_config_path_with_home(home);
+        let file_config = load_file_config(&config_path, options.config.is_some())?;
+        if let Some(workspace) = file_config.workspace {
+            return Ok(workspace);
+        }
+
+        Ok(default_app_dir(home).join("workspace"))
+    }
 }
 
 impl AgentOptions {
@@ -369,6 +417,27 @@ pub async fn run() -> Result<()> {
     if matches!(args.command_kind(), CliCommand::Version) {
         tracing::info!("printing reshape version");
         println!("{}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
+    if matches!(args.command_kind(), CliCommand::WorkspaceClean) {
+        let config = args.into_config_with_home(&home)?;
+        let removed = clean_workspace(&config.workspace.root).await?;
+        println!(
+            "removed {removed} workspace entries from {}",
+            config.workspace.root.display()
+        );
+        return Ok(());
+    }
+
+    if matches!(args.command_kind(), CliCommand::WorkspaceInit) {
+        let generated = args.init_workspace_with_home(&home).await?;
+        let workspace = args.resolved_workspace_for_init_with_home(&home)?;
+        if generated {
+            println!("initialized workspace at {}", workspace.display());
+        } else {
+            println!("workspace already initialized at {}", workspace.display());
+        }
         return Ok(());
     }
 
@@ -803,6 +872,26 @@ pub async fn ensure_workspace_index_html(workspace_root: &Path) -> Result<bool> 
     ensure_default_site_css(workspace_root).await?;
     tokio::fs::write(&index_path, default_workspace_index_html()).await?;
     Ok(true)
+}
+
+pub async fn clean_workspace(workspace_root: &Path) -> Result<usize> {
+    let workspace = LocalWorkspace::new(workspace_root)?;
+    let root = workspace.root();
+    let mut removed = 0;
+    let mut entries = tokio::fs::read_dir(&root).await?;
+
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+        let file_type = tokio::fs::symlink_metadata(&path).await?.file_type();
+        if file_type.is_dir() {
+            tokio::fs::remove_dir_all(&path).await?;
+        } else {
+            tokio::fs::remove_file(&path).await?;
+        }
+        removed += 1;
+    }
+
+    Ok(removed)
 }
 
 async fn ensure_default_site_css(workspace_root: &Path) -> Result<()> {

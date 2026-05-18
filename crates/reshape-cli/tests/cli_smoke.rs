@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use reshape_browser::{BrowserRenderError, BrowserRenderer};
-use reshape_cli::{CliArgs, build_runtime, build_runtime_with_provider};
+use reshape_cli::{CliArgs, CliCommand, build_runtime, build_runtime_with_provider};
 use reshape_core::error::Result as CoreResult;
 use reshape_core::llm::{ChatMessage, ChatOptions, LlmProvider, LlmResponse, ToolCall};
 use reshape_core::protocol::{Envelope, InputEvent, InputSource, OutputEvent};
@@ -40,6 +40,105 @@ fn cli_default_config_path_is_under_reshape_home() {
     assert_eq!(
         args.resolved_config_path_with_home(home.path()),
         home.path().join(".reshape").join("config.toml")
+    );
+}
+
+#[test]
+fn cli_parses_workspace_clean_command() {
+    let args = CliArgs::parse_from(["reshape", "workspace", "clean"]);
+
+    assert_eq!(args.command_kind(), CliCommand::WorkspaceClean);
+}
+
+#[test]
+fn cli_parses_workspace_init_command() {
+    let args = CliArgs::parse_from(["reshape", "workspace", "init"]);
+
+    assert_eq!(args.command_kind(), CliCommand::WorkspaceInit);
+}
+
+#[tokio::test]
+async fn workspace_init_creates_default_files_in_explicit_workspace() {
+    let home = tempfile::tempdir().unwrap();
+    let workspace = home.path().join("custom-workspace");
+    let args = CliArgs::parse_from([
+        "reshape",
+        "--workspace",
+        workspace.to_str().unwrap(),
+        "workspace",
+        "init",
+    ]);
+
+    let generated = args.init_workspace_with_home(home.path()).await.unwrap();
+
+    assert!(generated);
+    assert!(workspace.join("index.html").is_file());
+    assert!(workspace.join("assets").join("site.css").is_file());
+}
+
+#[tokio::test]
+async fn workspace_init_accepts_workspace_option_on_init_subcommand() {
+    let home = tempfile::tempdir().unwrap();
+    let workspace = home.path().join("nested-option-workspace");
+    let args = CliArgs::parse_from([
+        "reshape",
+        "workspace",
+        "init",
+        "--workspace",
+        workspace.to_str().unwrap(),
+    ]);
+
+    let generated = args.init_workspace_with_home(home.path()).await.unwrap();
+
+    assert!(generated);
+    assert!(workspace.join("index.html").is_file());
+    assert!(workspace.join("assets").join("site.css").is_file());
+}
+
+#[tokio::test]
+async fn workspace_init_uses_default_workspace_without_explicit_path() {
+    let home = tempfile::tempdir().unwrap();
+    let args = CliArgs::parse_from(["reshape", "workspace", "init"]);
+
+    let generated = args.init_workspace_with_home(home.path()).await.unwrap();
+
+    let workspace = home.path().join(".reshape").join("workspace");
+    assert!(generated);
+    assert!(workspace.join("index.html").is_file());
+    assert!(workspace.join("assets").join("site.css").is_file());
+}
+
+#[tokio::test]
+async fn workspace_clean_removes_workspace_contents_but_keeps_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    tokio::fs::create_dir_all(dir.path().join("assets").join("nested"))
+        .await
+        .unwrap();
+    tokio::fs::write(dir.path().join("index.html"), "<h1>old</h1>")
+        .await
+        .unwrap();
+    tokio::fs::write(
+        dir.path().join("assets").join("nested").join("site.css"),
+        "",
+    )
+    .await
+    .unwrap();
+    std::os::unix::fs::symlink(outside.path(), dir.path().join("linked-dir")).unwrap();
+
+    let removed = reshape_cli::clean_workspace(dir.path()).await.unwrap();
+
+    assert_eq!(removed, 3);
+    assert!(dir.path().is_dir());
+    assert!(outside.path().is_dir());
+    assert!(
+        tokio::fs::read_dir(dir.path())
+            .await
+            .unwrap()
+            .next_entry()
+            .await
+            .unwrap()
+            .is_none()
     );
 }
 

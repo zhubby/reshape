@@ -101,6 +101,12 @@ mkdir -p page
 cargo run -p reshape-cli -- --workspace ./page
 ```
 
+To create the default workspace files without starting the server:
+
+```bash
+cargo run -p reshape-cli -- --workspace ./page workspace init
+```
+
 The CLI starts the local server and opens the default local URL in the browser
 automatically. If the workspace does not have `index.html` yet, Reshape writes a
 default static homepage so the browser has a clear starting surface. Send a
@@ -143,6 +149,13 @@ To render the completed `index.html` through the embedded browser adapter:
 
 ```bash
 cargo run -p reshape-cli -- --workspace ./page --render-browser
+```
+
+To remove every file and directory inside a workspace while keeping the
+workspace directory itself:
+
+```bash
+cargo run -p reshape-cli -- --workspace ./page workspace clean
 ```
 
 Useful browser flags:
