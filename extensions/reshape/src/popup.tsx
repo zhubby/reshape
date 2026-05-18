@@ -6,16 +6,22 @@ import { loadRpcAddress, saveRpcAddress } from "./storage"
 import type { TabContext, TurnProgressEvent } from "./protocol"
 import {
   completeWorkingMessage,
+  composePrompt,
   connectionActionLabel,
+  contextLabel,
   effectiveConnectionStatus,
   failWorkingMessage,
   isConnectedToEditedAddress,
   messagesFromHistory,
+  userBubbleText,
   type PopupMessage
 } from "./popup-state"
+import type { SelectionContext } from "./selection-context"
 
 type ChatMessage = PopupMessage
-type BackgroundMessage = { type: "reshape.progress"; event: TurnProgressEvent }
+type BackgroundMessage =
+  | { type: "reshape.progress"; event: TurnProgressEvent }
+  | { type: "reshape.pendingContext"; context: SelectionContext | null }
 type BackgroundStatus = {
   status: ConnectionStatus
   statusText: string
@@ -28,6 +34,10 @@ type BackgroundResponse<T> =
       ok: false
       error: string
     }
+type StatusResponse = {
+  status: BackgroundStatus
+  pendingContext?: SelectionContext | null
+}
 
 const INITIAL_MESSAGES: ChatMessage[] = []
 
@@ -37,6 +47,7 @@ function IndexPopup() {
   const [statusText, setStatusText] = useState("Handshake not started")
   const [connectedAddress, setConnectedAddress] = useState<string | undefined>()
   const [input, setInput] = useState("")
+  const [pendingContext, setPendingContext] = useState<SelectionContext | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES)
   const didAutoConnect = useRef(false)
   const effectiveStatus = effectiveConnectionStatus(status, rpcAddress, connectedAddress)
@@ -66,6 +77,10 @@ function IndexPopup() {
 
   useEffect(() => {
     const listener = (message: BackgroundMessage) => {
+      if (message?.type === "reshape.pendingContext") {
+        setPendingContext(message.context)
+        return
+      }
       if (message?.type !== "reshape.progress") {
         return
       }
@@ -79,11 +94,12 @@ function IndexPopup() {
     const address = await loadRpcAddress().catch(() => "127.0.0.1:7331")
     setRpcAddress(address)
 
-    const status = await sendBackground<{ status: BackgroundStatus }>({
+    const status = await sendBackground<StatusResponse>({
       type: "reshape.status"
     }).catch(() => null)
     if (status?.status) {
       applyStatus(status.status)
+      setPendingContext(status.pendingContext ?? null)
       if (status.status.status === "connected") {
         didAutoConnect.current = true
         return
@@ -187,8 +203,9 @@ function IndexPopup() {
   }
 
   async function sendMessage() {
-    const text = input.trim()
-    if (!text || !canChat) {
+    const text = composePrompt(input, pendingContext)
+    const bubbleText = userBubbleText(input, pendingContext)
+    if (!bubbleText || !canChat) {
       return
     }
 
@@ -196,7 +213,7 @@ function IndexPopup() {
     setStatusText("Agent is working...")
     setMessages((current) => [
       ...current,
-      { role: "user", text },
+      { role: "user", text: bubbleText },
       { role: "reshape", text: "Working...", status: "working" }
     ])
 
@@ -219,6 +236,12 @@ function IndexPopup() {
         )
       }
       setMessages((current) => completeWorkingMessage(current, result))
+      if (pendingContext) {
+        setPendingContext(null)
+        await sendBackground<{ pendingContext: null }>({
+          type: "reshape.clearPendingContext"
+        }).catch(() => undefined)
+      }
     } catch (error) {
       const errorText = error instanceof Error ? error.message : "Send failed"
       setMessages((current) => failWorkingMessage(current, errorText))
@@ -284,22 +307,50 @@ function IndexPopup() {
           event.preventDefault()
           void sendMessage()
         }}>
-        <input
-          value={input}
-          onChange={(event) => setInput(event.currentTarget.value)}
-          disabled={!canChat}
-          placeholder={canChat ? "Tell reshape what to do..." : "Handshake first"}
-          style={styles.input}
-        />
+        <div style={styles.composer}>
+          {pendingContext ? (
+            <div style={styles.contextChip}>
+              <span style={styles.contextChipText}>{contextLabel(pendingContext)}</span>
+              <button
+                type="button"
+                aria-label="Remove captured selection"
+                title="Remove captured selection"
+                onClick={() => void clearPendingContext()}
+                style={styles.contextChipRemove}>
+                x
+              </button>
+            </div>
+          ) : null}
+          <input
+            value={input}
+            onChange={(event) => setInput(event.currentTarget.value)}
+            disabled={!canChat}
+            placeholder={
+              canChat
+                ? pendingContext
+                  ? "Add an instruction..."
+                  : "Tell reshape what to do..."
+                : "Handshake first"
+            }
+            style={styles.input}
+          />
+        </div>
         <button
           type="submit"
-          disabled={!canChat || input.trim().length === 0}
+          disabled={!canChat || (input.trim().length === 0 && !pendingContext)}
           style={styles.primaryButton}>
           Send
         </button>
       </form>
     </main>
   )
+
+  async function clearPendingContext() {
+    setPendingContext(null)
+    await sendBackground<{ pendingContext: null }>({
+      type: "reshape.clearPendingContext"
+    }).catch(() => undefined)
+  }
 }
 
 function sendBackground<T>(message: Record<string, unknown>): Promise<T> {
@@ -443,6 +494,44 @@ const styles = {
     fontSize: 14,
     outlineColor: "#265ee8",
     background: "#ffffff"
+  } as React.CSSProperties,
+  composer: {
+    flex: 1,
+    minWidth: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: 6
+  } as React.CSSProperties,
+  contextChip: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    maxWidth: "100%",
+    border: "1px solid #b9c5f8",
+    borderRadius: 8,
+    padding: "5px 7px",
+    background: "#f3f6ff",
+    color: "#263044",
+    fontSize: 12,
+    lineHeight: 1.2
+  } as React.CSSProperties,
+  contextChipText: {
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap"
+  } as React.CSSProperties,
+  contextChipRemove: {
+    width: 18,
+    height: 18,
+    border: 0,
+    borderRadius: 999,
+    padding: 0,
+    background: "#dbe4ff",
+    color: "#263044",
+    cursor: "pointer",
+    fontSize: 12,
+    lineHeight: "18px"
   } as React.CSSProperties,
   secondaryButton: {
     border: "1px solid #1f2937",

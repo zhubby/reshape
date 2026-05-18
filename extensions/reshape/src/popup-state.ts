@@ -1,4 +1,5 @@
 import type { ChatResult, ConnectionStatus } from "./rpc"
+export { composePrompt, contextLabel, userBubbleText } from "./selection-context"
 
 export type PopupMessage = {
   role: "user" | "reshape" | "system"
