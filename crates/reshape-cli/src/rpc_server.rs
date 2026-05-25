@@ -11,6 +11,7 @@ use axum::http::{StatusCode, header};
 use axum::response::Response;
 use axum::routing::get;
 use futures_util::stream::SplitSink;
+use futures_util::stream::SplitStream;
 use futures_util::{SinkExt, StreamExt};
 use reshape_browser::BrowserRenderer;
 use reshape_core::error::Result;
@@ -196,7 +197,7 @@ async fn handle_socket(socket: WebSocket, state: RpcServerState) {
                         Err(error) => Some(RpcResponse::error(None, error)),
                     }
                 } else {
-                    handle_text_frame(&state, text.as_str(), &mut sender).await
+                    handle_text_frame(&state, text.as_str(), &mut receiver, &mut sender).await
                 }
             }
             Ok(Message::Binary(_)) => {
@@ -239,6 +240,7 @@ async fn handle_socket(socket: WebSocket, state: RpcServerState) {
 async fn handle_text_frame(
     state: &RpcServerState,
     text: &str,
+    receiver: &mut SplitStream<WebSocket>,
     sender: &mut SplitSink<WebSocket, Message>,
 ) -> Option<RpcResponse> {
     let request = match parse_rpc_request(text) {
@@ -359,6 +361,26 @@ async fn handle_text_frame(
                     return None;
                 }
             }
+            message = receiver.next() => {
+                match message {
+                    Some(Ok(Message::Close(frame))) => {
+                        tracing::debug!(?frame, "json-rpc websocket connection closing during agent request");
+                        return None;
+                    }
+                    Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => {}
+                    Some(Ok(Message::Text(_))) | Some(Ok(Message::Binary(_))) => {
+                        tracing::warn!(id = %id, "json-rpc client sent overlapping request while agent turn is in progress");
+                    }
+                    Some(Err(error)) => {
+                        tracing::warn!(%error, "websocket frame error during agent request");
+                        return None;
+                    }
+                    None => {
+                        tracing::debug!("json-rpc websocket connection closed during agent request");
+                        return None;
+                    }
+                }
+            }
             response = &mut response_rx => {
                 while let Ok(progress) = progress_rx.try_recv() {
                     if sender
@@ -443,66 +465,76 @@ async fn run_agent_worker(
         let AgentRequestKind::Input(envelope) = request.kind else {
             unreachable!("non-input requests are handled before input processing");
         };
+        let mut response_tx = request.response_tx;
         tracing::debug!(
             message_id = %envelope.header.message_id,
             trace_id = %envelope.header.trace_id,
             "json-rpc agent worker processing request"
         );
-        let before = match &workspace_root {
-            Some(root) => workspace_fingerprint(root).await.unwrap_or_default(),
-            None => BTreeMap::new(),
-        };
-        let mut tool_events = Vec::new();
         let progress_tx = request.progress_tx;
-        let response = match runtime
-            .process_with_progress(*envelope, |event| {
-                tool_events.push(event.clone());
-                if let Some(progress_tx) = &progress_tx {
-                    let _ = progress_tx.send(event);
-                }
-            })
-            .await
-        {
-            Ok(mut envelope) => {
-                if !tool_events.is_empty() {
-                    envelope
-                        .metadata
-                        .insert("toolEvents".to_string(), serde_json::json!(tool_events));
-                }
-                if let Some(root) = &workspace_root {
-                    let changed_files = changed_workspace_files(root, &before).await;
-                    if !changed_files.is_empty() {
-                        envelope
-                            .metadata
-                            .insert("changedFiles".to_string(), serde_json::json!(changed_files));
-                    }
-                }
 
-                if matches!(envelope.payload, OutputEvent::Completed { .. })
-                    && let Some(render_loop) = &render_loop
-                    && workspace_index_exists(workspace_root.as_deref()).await
-                    && let Some(render_result) = refresh_browser_preview(render_loop).await
+        let response = tokio::select! {
+            () = response_tx.closed() => {
+                tracing::debug!("json-rpc agent request cancelled after client dropped");
+                continue;
+            },
+            response = async {
+                let before = match &workspace_root {
+                    Some(root) => workspace_fingerprint(root).await.unwrap_or_default(),
+                    None => BTreeMap::new(),
+                };
+                let mut tool_events = Vec::new();
+                match runtime
+                    .process_with_progress(*envelope, |event| {
+                        tool_events.push(event.clone());
+                        if let Some(progress_tx) = &progress_tx {
+                            let _ = progress_tx.send(event);
+                        }
+                    })
+                    .await
                 {
-                    match render_result {
-                        Ok(rendered_url) => {
+                    Ok(mut envelope) => {
+                        if !tool_events.is_empty() {
                             envelope
                                 .metadata
-                                .insert("renderedUrl".to_string(), serde_json::json!(rendered_url));
+                                .insert("toolEvents".to_string(), serde_json::json!(tool_events));
                         }
-                        Err(warning) => {
-                            envelope
-                                .metadata
-                                .insert("renderWarning".to_string(), serde_json::json!(warning));
+                        if let Some(root) = &workspace_root {
+                            let changed_files = changed_workspace_files(root, &before).await;
+                            if !changed_files.is_empty() {
+                                envelope
+                                    .metadata
+                                    .insert("changedFiles".to_string(), serde_json::json!(changed_files));
+                            }
                         }
-                    }
-                }
 
-                Ok(AgentResponse::Output(envelope))
-            }
-            Err(error) => Err(RpcError::server(error.to_string())),
+                        if matches!(envelope.payload, OutputEvent::Completed { .. })
+                            && let Some(render_loop) = &render_loop
+                            && workspace_index_exists(workspace_root.as_deref()).await
+                            && let Some(render_result) = refresh_browser_preview(render_loop).await
+                        {
+                            match render_result {
+                                Ok(rendered_url) => {
+                                    envelope
+                                        .metadata
+                                        .insert("renderedUrl".to_string(), serde_json::json!(rendered_url));
+                                }
+                                Err(warning) => {
+                                    envelope
+                                        .metadata
+                                        .insert("renderWarning".to_string(), serde_json::json!(warning));
+                                }
+                            }
+                        }
+
+                        Ok(AgentResponse::Output(envelope))
+                    }
+                    Err(error) => Err(RpcError::server(error.to_string())),
+                }
+            } => response,
         };
-        if request.response_tx.send(response).is_err() {
-            tracing::warn!("json-rpc client dropped before agent response was delivered");
+        if response_tx.send(response).is_err() {
+            tracing::debug!("json-rpc client dropped before agent response was delivered");
         }
     }
     tracing::warn!("json-rpc agent worker stopped");

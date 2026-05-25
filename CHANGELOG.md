@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-05-25
+
+### Fixed
+
+- Default workspace stylesheet now renders ordinary HTML links with visible accent color and underlines while preserving quiet navigation link styling.
+
 ## 2026-05-18
 
 ### Added

@@ -1,6 +1,8 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
@@ -16,7 +18,7 @@ use reshape_core::llm::{ChatMessage, ChatOptions, LlmProvider, LlmResponse, Tool
 use reshape_core::session::store::FileSessionStore;
 use serde_json::Value;
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use tracing_subscriber::fmt::MakeWriter;
@@ -280,6 +282,42 @@ async fn websocket_stays_open_after_provider_error_response() {
         recovered["result"]["output"]["summary"],
         "Recovered on same socket"
     );
+    task.abort();
+}
+
+#[tokio::test]
+async fn websocket_disconnect_cancels_in_flight_agent_turn() {
+    let provider = Arc::new(BlockingLlmProvider::default());
+    let (addr, _workspace, task) = spawn_server_with_provider(provider.clone()).await;
+    let (mut socket, _) = connect_async(format!("ws://{addr}/v1/rpc")).await.unwrap();
+    send_handshake(&mut socket).await;
+    let _ack = next_json(&mut socket).await;
+
+    socket
+        .send(Message::Text(
+            r#"{
+                "jsonrpc": "2.0",
+                "id": "turn-cancel",
+                "method": "reshape.input",
+                "params": {
+                    "input": {
+                        "type": "user_text",
+                        "text": "start a long turn"
+                    }
+                }
+            }"#
+            .into(),
+        ))
+        .await
+        .unwrap();
+
+    provider.started.notified().await;
+    socket.close(None).await.unwrap();
+
+    tokio::time::timeout(Duration::from_secs(2), provider.cancelled.notified())
+        .await
+        .expect("in-flight provider call should be cancelled after websocket disconnect");
+    assert!(provider.was_cancelled.load(Ordering::SeqCst));
     task.abort();
 }
 
@@ -862,6 +900,18 @@ struct ProviderErrorThenResponse {
     has_failed: Mutex<bool>,
 }
 
+#[derive(Debug, Default)]
+struct BlockingLlmProvider {
+    started: Arc<Notify>,
+    cancelled: Arc<Notify>,
+    was_cancelled: Arc<AtomicBool>,
+}
+
+struct CancellationGuard {
+    cancelled: Arc<Notify>,
+    was_cancelled: Arc<AtomicBool>,
+}
+
 #[derive(Default)]
 struct FakeBrowserRenderer {
     events: Arc<StdMutex<Vec<String>>>,
@@ -944,6 +994,45 @@ impl ProviderErrorThenResponse {
             response: Mutex::new(Some(response)),
             has_failed: Mutex::new(false),
         }
+    }
+}
+
+impl CancellationGuard {
+    fn new(provider: &BlockingLlmProvider) -> Self {
+        Self {
+            cancelled: provider.cancelled.clone(),
+            was_cancelled: provider.was_cancelled.clone(),
+        }
+    }
+}
+
+impl Drop for CancellationGuard {
+    fn drop(&mut self) {
+        self.was_cancelled.store(true, Ordering::SeqCst);
+        self.cancelled.notify_waiters();
+    }
+}
+
+#[async_trait]
+impl LlmProvider for BlockingLlmProvider {
+    fn name(&self) -> &str {
+        "blocking"
+    }
+
+    fn default_model(&self) -> &str {
+        "blocking-model"
+    }
+
+    async fn chat(
+        &self,
+        _messages: Vec<ChatMessage>,
+        _tools: Vec<reshape_core::tools::types::ToolDefinition>,
+        _options: ChatOptions,
+    ) -> Result<LlmResponse> {
+        let _guard = CancellationGuard::new(self);
+        self.started.notify_waiters();
+        std::future::pending::<()>().await;
+        unreachable!("blocking provider should only finish by cancellation");
     }
 }
 

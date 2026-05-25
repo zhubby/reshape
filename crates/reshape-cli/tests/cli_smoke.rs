@@ -570,6 +570,10 @@ async fn startup_generates_default_index_when_workspace_is_empty() {
     assert!(css.contains(".masthead"));
     assert!(css.contains(".hero"));
     assert!(css.contains(".prose"));
+    assert!(css.contains("text-decoration: underline"));
+    assert!(css.contains("text-underline-offset"));
+    assert!(css.contains(".wordmark"));
+    assert!(css.contains(".nav a"));
 }
 
 #[tokio::test]
